@@ -1,0 +1,15 @@
+{
+  "name": "local-photobooth",
+  "version": "1.0.0",
+  "description": "Local Photobooth UI with Electron",
+  "main": "dist/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "tsc"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "typescript": "^5.4.5"
+  }
+}
