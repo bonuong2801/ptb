@@ -8,6 +8,13 @@ contextBridge.exposeInMainWorld(
     getServerUrl: () => ipcRenderer.invoke('get-server-url'),
     getSaveDirectory: () => ipcRenderer.invoke('get-save-directory'),
     selectDirectory: () => ipcRenderer.invoke('select-directory'),
+    
+    // Printer APIs
+    getPrinters: () => ipcRenderer.invoke('get-printers'),
+    printImage: (data) => ipcRenderer.invoke('print-image', data),
+    getSavedPrinter: () => ipcRenderer.invoke('get-saved-printer'),
+    savePrinter: (printerName) => ipcRenderer.invoke('save-printer', printerName),
+
     onSyncReceived: (callback) => {
       ipcRenderer.removeAllListeners('sync-received');
       ipcRenderer.on('sync-received', (event, data) => callback(data));

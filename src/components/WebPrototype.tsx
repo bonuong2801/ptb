@@ -10,6 +10,10 @@ declare global {
       openCustomerScreen: () => void;
       broadcastSync: (data: any) => void;
       onSyncReceived: (callback: (data: any) => void) => void;
+      getPrinters?: () => Promise<any[]>;
+      printImage?: (data: any) => Promise<{success: boolean, error?: string}>;
+      getSavedPrinter?: () => Promise<string>;
+      savePrinter?: (name: string) => Promise<boolean>;
     };
   }
 }
@@ -599,23 +603,33 @@ function ControlScreen() {
         setFinalImage(data);
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const currentSessionName = `Session_${timestamp}`;
-        setSessionDlUrl('Đang tạo link...');
+        
         
         // --- ELECTRON AUTO-SAVE LOGIC ---
         if ((window as any).electronAPI && savedSessionRef.current !== currentSessionName) {
            savedSessionRef.current = currentSessionName;
-           const result = await (window as any).electronAPI.saveSession({
+           (window as any).electronAPI.saveSession({
               sessionName: currentSessionName,
               finalImage: data,
-              rawImages: capturedImages
+              rawImages: capturedImages,
+              videoBase64: null
            });
-           if (result.success) {
-              console.log('Session saved to PC successfully (Admin):', result.folderPath);
-              if (result.downloadUrl) setSessionDlUrl(result.downloadUrl);
-           } else {
-              console.error('Failed to save to PC (Admin):', result.error);
-              setSessionDlUrl('');
-           }
+           
+           const webUrl = `https://neobooth-web.vercel.app/?id=${currentSessionName}`;
+           setSessionDlUrl(webUrl);
+
+           try {
+             const { createClient } = await import("@supabase/supabase-js");
+             const supabase = createClient("https://riqgdjwcvritldlsboji.supabase.co", "sb_publishable_94Aov-K-1KUb_EVj2yxe7g_PJSLePRW");
+             
+             const finalBlob = await (await fetch(data)).blob();
+             supabase.storage.from("cgbooth").upload(`${currentSessionName}/final_strip.jpg`, finalBlob, { contentType: "image/jpeg" });
+             
+             capturedImages.forEach(async (img, idx) => {
+                const rawBlob = await (await fetch(img)).blob();
+                supabase.storage.from("cgbooth").upload(`${currentSessionName}/raw_photo_${idx + 1}.jpg`, rawBlob, { contentType: "image/jpeg" });
+             });
+           } catch(e) { console.error("Loi Supabase Admin", e); }
         }
       });
     } else if (capturedImages.length === 0) {
@@ -848,45 +862,46 @@ function ControlScreen() {
     }
   }, [capturedImages.length, customConfig.totalShots, isSessionActive, isProcessing, finalImage]);
 
-  const handlePrint = () => {
-    // Gọi lệnh in thông qua Electron hoặc API máy in (Tạm thời in thông qua trình duyệt/hệ điều hành)
-    console.log(`Đang in ${printCopies} bản...`);
+  const handlePrint = async () => {
+    if (!selectedPrinter) {
+      alert("Vui long chon may in o cot ben trai!");
+      return;
+    }
+    console.log("Dang in...");
     setIsPrintModalOpen(false);
-    
-    // Tạo 1 cửa sổ mới chỉ chứa ảnh và tự động gọi window.print()
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(`
-        <html>
-          <head>
-            <style>
-              body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #fff; }
-              img { max-height: 100vh; max-width: 100vw; object-fit: contain; }
-              @media print {
-                @page { margin: 0; }
-                body { margin: 0; }
-              }
-            </style>
-          </head>
-          <body>
-            ${Array(printCopies).fill(`<img src="${finalImage}" />`).join('<div style="page-break-after: always;"></div>')}
-            <script>
-              window.onload = () => { window.print(); setTimeout(() => window.close(), 1000); }
-            </script>
-          </body>
-        </html>
-      `);
-      printWindow.document.close();
+    if ((window as any).electronAPI && (window as any).electronAPI.printImage) {
+      const result = await (window as any).electronAPI.printImage({ imageBase64: finalImage, copies: printCopies, printerName: selectedPrinter });
+      if (!result.success) alert("Loi khi in: " + result.error);
     }
   };
 
   const [saveDirectory, setSaveDirectory] = useState<string>('');
+  const [printers, setPrinters] = useState<any[]>([]);
+  const [selectedPrinter, setSelectedPrinter] = useState<string>('');
 
   useEffect(() => {
-    if ((window as any).electronAPI && (window as any).electronAPI.getSaveDirectory) {
-      (window as any).electronAPI.getSaveDirectory().then((dir: string) => setSaveDirectory(dir));
+    if ((window as any).electronAPI) {
+      if ((window as any).electronAPI.getSaveDirectory) {
+        (window as any).electronAPI.getSaveDirectory().then((dir: string) => setSaveDirectory(dir));
+      }
+      if ((window as any).electronAPI.getPrinters) {
+        (window as any).electronAPI.getPrinters().then((p: any[]) => setPrinters(p));
+      }
+      if ((window as any).electronAPI.getSavedPrinter) {
+        (window as any).electronAPI.getSavedPrinter().then((p: string) => {
+          if (p) setSelectedPrinter(p);
+        });
+      }
     }
   }, []);
+
+  const handlePrinterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const name = e.target.value;
+    setSelectedPrinter(name);
+    if ((window as any).electronAPI && (window as any).electronAPI.savePrinter) {
+      (window as any).electronAPI.savePrinter(name);
+    }
+  };
 
   const handleChangeSaveDirectory = async () => {
     if ((window as any).electronAPI && (window as any).electronAPI.selectDirectory) {
@@ -963,6 +978,20 @@ function ControlScreen() {
               >
                 Cấu hình frame
               </button>
+           </div>
+
+           <div className="card bg-black/50 border border-white/10 rounded-xl p-5 shrink-0 flex flex-col gap-2">
+              <h2 className="card-title text-amber-glow">May in ngam (Silent Print)</h2>
+              <select 
+                value={selectedPrinter} 
+                onChange={handlePrinterChange}
+                className="bg-white/10 text-white text-xs px-3 py-2 rounded-lg border border-white/20 focus:outline-none focus:border-amber-glow"
+              >
+                <option value="">-- Chon may in --</option>
+                {printers.map((p, i) => (
+                  <option key={i} value={p.name}>{p.name}</option>
+                ))}
+              </select>
            </div>
 
            {/* Saved Frames List */}

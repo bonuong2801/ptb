@@ -7,21 +7,86 @@ const express = require('express');
 let adminWindow = null;
 let customerWindow = null;
 
-// Quản lý thư mục lưu mặc định
+// Quản lý cấu hình (Thư mục lưu & Máy in)
 const configPath = path.join(app.getPath('userData'), 'cgbooth_config.json');
-let customSaveDir = null;
+let customConfig = {};
 try {
   if (fs.existsSync(configPath)) {
-    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    if (cfg.saveDirectory) customSaveDir = cfg.saveDirectory;
+    customConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   }
 } catch (e) {}
 
-function getSaveDirectory() {
-  return customSaveDir || path.join(app.getPath('pictures'), 'CGBOOTH');
+function saveConfig(key, value) {
+  customConfig[key] = value;
+  fs.writeFileSync(configPath, JSON.stringify(customConfig, null, 2));
 }
 
-// ─── Local photo server ───────────────────────────────────────────────────────
+function getSaveDirectory() {
+  return customConfig.saveDirectory || path.join(app.getPath('pictures'), 'CGBOOTH');
+}
+
+// -------------------------------------------------------------
+// PRINTER IPCs
+// -------------------------------------------------------------
+ipcMain.handle('get-printers', async () => {
+  if (adminWindow) {
+    return await adminWindow.webContents.getPrintersAsync();
+  }
+  return [];
+});
+
+ipcMain.handle('get-saved-printer', () => customConfig.savedPrinter || null);
+
+ipcMain.handle('save-printer', (event, printerName) => {
+  saveConfig('savedPrinter', printerName);
+  return true;
+});
+
+ipcMain.handle('print-image', async (event, { imageBase64, copies, printerName }) => {
+  try {
+    const printWindow = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true } });
+    const htmlContent = `
+      <html>
+        <head>
+          <style>
+            @page { margin: 0; }
+            body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #fff; }
+            img { max-height: 100vh; max-width: 100vw; object-fit: contain; }
+          </style>
+        </head>
+        <body>
+          <img src="${imageBase64}" />
+        </body>
+      </html>
+    `;
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+    
+    // In ngầm
+    for (let i = 0; i < copies; i++) {
+      await new Promise((resolve) => {
+        printWindow.webContents.print({
+          silent: true,
+          printBackground: true,
+          deviceName: printerName,
+          color: true,
+        }, (success, failureReason) => {
+          if (!success) console.error("Lỗi in:", failureReason);
+          resolve();
+        });
+      });
+    }
+    
+    setTimeout(() => printWindow.destroy(), 1000);
+    return { success: true };
+  } catch (err) {
+    console.error("Lỗi lệnh in:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+// -------------------------------------------------------------
+// LOCAL PHOTO SERVER
+// -------------------------------------------------------------
 const SERVER_PORT = 3001;
 const photoServer = express();
 
@@ -82,19 +147,17 @@ ipcMain.handle('select-directory', async (event) => {
   });
   
   if (!canceled && filePaths.length > 0) {
-    customSaveDir = filePaths[0];
-    fs.writeFileSync(configPath, JSON.stringify({ saveDirectory: customSaveDir }));
+    const newDir = filePaths[0];
+    saveConfig('saveDirectory', newDir);
     
-    // Khởi tạo thư mục nếu chưa có
-    if (!fs.existsSync(customSaveDir)) {
-      fs.mkdirSync(customSaveDir, { recursive: true });
+    if (!fs.existsSync(newDir)) {
+      fs.mkdirSync(newDir, { recursive: true });
     }
     
-    // Chuyển hướng express static
     photoServer._router.stack = photoServer._router.stack.filter(r => r.name !== 'serveStatic');
-    photoServer.use('/session', express.static(customSaveDir));
+    photoServer.use('/session', express.static(newDir));
     
-    return customSaveDir;
+    return newDir;
   }
   return null;
 });
