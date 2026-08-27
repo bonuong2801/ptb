@@ -21,13 +21,36 @@ function getLocalIP() {
   return 'localhost';
 }
 
-// Serve tĩnh toàn bộ thư mục Pictures/NeoBooth
-app.whenReady().then(() => {
-  const neoboothDir = path.join(app.getPath('pictures'), 'NeoBooth');
-  if (!fs.existsSync(neoboothDir)) fs.mkdirSync(neoboothDir, { recursive: true });
-  photoServer.use('/session', express.static(neoboothDir));
-  photoServer.listen(SERVER_PORT, '0.0.0.0', () => {
-    console.log(`[NeoBooth] Photo server running at http://${getLocalIP()}:${SERVER_PORT}`);
+let localTunnelInstance = null;
+let publicUrl = null;
+
+// Serve tĩnh toàn bộ thư mục Pictures/CGBOOTH
+app.whenReady().then(async () => {
+  const cgboothDir = path.join(app.getPath('pictures'), 'CGBOOTH');
+  if (!fs.existsSync(cgboothDir)) fs.mkdirSync(cgboothDir, { recursive: true });
+  photoServer.use('/session', express.static(cgboothDir));
+  
+  // CORS needed for the web app to fetch from localtunnel
+  photoServer.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+    next();
+  });
+
+  photoServer.listen(SERVER_PORT, '0.0.0.0', async () => {
+    console.log(`[CGBOOTH] Photo server running at http://${getLocalIP()}:${SERVER_PORT}`);
+    try {
+      const localtunnel = require('localtunnel');
+      localTunnelInstance = await localtunnel({ port: SERVER_PORT });
+      publicUrl = localTunnelInstance.url;
+      console.log(`[CGBOOTH] Public Tunnel running at: ${publicUrl}`);
+      
+      localTunnelInstance.on('close', () => {
+        console.log('[CGBOOTH] Tunnel closed');
+      });
+    } catch (e) {
+      console.error('[CGBOOTH] Failed to start Localtunnel:', e);
+    }
   });
 
   createWindow();
@@ -41,7 +64,7 @@ function createWindow() {
   adminWindow = new BrowserWindow({
     width: 1400,
     height: 900,
-    title: "NeoBooth Admin",
+    title: "CGBOOTH Admin",
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -78,7 +101,7 @@ ipcMain.on('open-customer-screen', () => {
     y: externalDisplay ? externalDisplay.bounds.y + 50 : undefined,
     width: 1280,
     height: 720,
-    title: "NeoBooth Customer",
+    title: "CGBOOTH Customer",
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -112,10 +135,10 @@ ipcMain.handle('get-server-url', () => {
   return `http://${getLocalIP()}:${SERVER_PORT}`;
 });
 
-ipcMain.handle('save-session', async (event, { sessionName, finalImage, rawImages }) => {
+ipcMain.handle('save-session', async (event, { sessionName, finalImage, rawImages, videoBase64 }) => {
   try {
-    const safeSessionName = path.basename(sessionName);
-    const targetDir = path.join(app.getPath('pictures'), 'NeoBooth', safeSessionName);
+    const safeSessionName = sessionName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const targetDir = path.join(app.getPath('pictures'), 'CGBOOTH', safeSessionName);
     if (!fs.existsSync(targetDir)) {
       fs.mkdirSync(targetDir, { recursive: true });
     }
@@ -132,10 +155,22 @@ ipcMain.handle('save-session', async (event, { sessionName, finalImage, rawImage
         }
       });
     }
+    if (videoBase64) {
+      const base64Video = videoBase64.split(';base64,').pop();
+      fs.writeFileSync(path.join(targetDir, 'bts_video.webm'), base64Video, { encoding: 'base64' });
+    }
 
-    const localIP = getLocalIP();
-    const downloadUrl = `http://${localIP}:${SERVER_PORT}/session/${safeSessionName}/final_strip.jpg`;
-    return { success: true, folderPath: targetDir, downloadUrl };
+    const downloadUrl = publicUrl 
+        ? `${publicUrl}/session/${safeSessionName}/final_strip.jpg`
+        : `http://${getLocalIP()}:${SERVER_PORT}/session/${safeSessionName}/final_strip.jpg`;
+        
+    return { 
+        success: true, 
+        folderPath: targetDir, 
+        downloadUrl,
+        publicTunnelUrl: publicUrl ? `${publicUrl}/session/${safeSessionName}` : null,
+        sessionName: safeSessionName
+    };
   } catch (error) {
     console.error('Lỗi khi lưu ảnh:', error);
     return { success: false, error: error.message };

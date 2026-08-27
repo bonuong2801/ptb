@@ -989,7 +989,7 @@ function ControlScreen() {
                 {capturedImages.length === customConfig.totalShots && !isProcessing ? (
                   <div className="flex items-center gap-4 h-full">
                     <div className="bg-white p-2 rounded-lg shrink-0">
-                      <QRCodeSVG value={sessionDlUrl || "https://neobooth.com/"} size={80} />
+                      <QRCodeSVG value={sessionDlUrl || "https://cgbooth.com/"} size={80} />
                     </div>
                     <div className="flex flex-col justify-center">
                       <h2 className="text-amber-glow font-bold mb-1 uppercase tracking-widest text-sm">Session Complete</h2>
@@ -1098,6 +1098,10 @@ function CameraScreen() {
   const [sessionDlUrl, setSessionDlUrl] = useState<string>('');
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
 
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<BlobPart[]>([]);
+  const [recordedVideoBlob, setRecordedVideoBlob] = useState<Blob | null>(null);
+
   // App State (synced from Control)
   // Lưu TẤT CẢ state cần broadcast vào ref để tránh stale closure trong
   // các callback được đăng ký 1 lần trong useEffect([]) (bc.onMessage).
@@ -1181,6 +1185,9 @@ function CameraScreen() {
             doCountdown(updated.length);
           }, 1000);
         } else {
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
+          }
           setIsProcessing(true);
           broadcastState({ isProcessing: true });
           setTimeout(() => {
@@ -1195,15 +1202,39 @@ function CameraScreen() {
 
   const beginSession = () => {
     setCapturedImages([]);
+    setRecordedVideoBlob(null);
     setCurrentShotIndex(0);
     setIsSessionActive(true);
     setIsProcessing(false);
     broadcastState({ capturedImages: [], currentShotIndex: 0, isSessionActive: true, isProcessing: false });
+    
+    // Bắt đầu ghi video
+    if (stream) {
+      try {
+        mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+      } catch (e) {
+        mediaRecorderRef.current = new MediaRecorder(stream);
+      }
+      recordedChunksRef.current = [];
+      mediaRecorderRef.current.ondataavailable = (e) => {
+        if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+      };
+      mediaRecorderRef.current.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+        setRecordedVideoBlob(blob);
+      };
+      mediaRecorderRef.current.start(200);
+    }
+    
     doCountdown(0);
   };
 
   const resetLocalSession = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
     setCapturedImages([]);
+    setRecordedVideoBlob(null);
     setCurrentShotIndex(0);
     setIsSessionActive(false);
     setCountdown(null);
@@ -1239,32 +1270,69 @@ function CameraScreen() {
     return () => clearInterval(interval);
   }, [isProcessing]);
 
+  // Helpers for Cloudinary
+  const uploadToCloud = async (base64Data: string, type: 'image' | 'video' = 'image'): Promise<string | null> => {
+    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+    const preset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+    if (!cloudName || !preset) return null;
+    const formData = new FormData();
+    formData.append('file', base64Data);
+    formData.append('upload_preset', preset);
+    try {
+      const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${type}/upload`, { method: 'POST', body: formData });
+      const data = await res.json();
+      return data.public_id || null;
+    } catch(e) { return null; }
+  };
+
+  const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+  };
+
   useEffect(() => {
     if (capturedImages.length === customConfig.totalShots && capturedImages.length > 0) {
+      setSessionDlUrl('Đang tạo ảnh ghép...');
       generateFinalImage(customConfig, capturedImages).then(async data => {
         setFinalImage(data);
-        setSessionDlUrl('Đang tạo link...');
-
-        if ((window as any).electronAPI) {
-          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-          const currentSessionName = `Session_${timestamp}`;
-          const result = await (window as any).electronAPI.saveSession({
-            sessionName: currentSessionName,
-            finalImage: data,
-            rawImages: capturedImages
-          });
-          if (result.success && result.downloadUrl) {
-            setSessionDlUrl(result.downloadUrl);
-          } else {
-            setSessionDlUrl('');
-          }
-        }
       });
     } else {
       setFinalImage(null);
       setSessionDlUrl('');
     }
   }, [capturedImages, customConfig]);
+
+  useEffect(() => {
+    const processAll = async () => {
+      if (!finalImage || !recordedVideoBlob || capturedImages.length !== customConfig.totalShots) return;
+      
+      setSessionDlUrl('Đang đẩy ra Internet (LocalTunnel)...');
+      const videoBase64 = await blobToBase64(recordedVideoBlob);
+
+      if ((window as any).electronAPI) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const currentSessionName = `Session_${timestamp}`;
+        const result = await (window as any).electronAPI.saveSession({
+          sessionName: currentSessionName,
+          finalImage: finalImage,
+          rawImages: capturedImages,
+          videoBase64: videoBase64
+        });
+        
+        if (result.success && result.publicTunnelUrl) {
+          // Tạo link QR trỏ về trang web tải ảnh (chứa base URL của Tunnel)
+          const webUrl = `https://cgbooth-web.vercel.app/?t=${encodeURIComponent(result.publicTunnelUrl)}`;
+          setSessionDlUrl(webUrl);
+        } else {
+          setSessionDlUrl(result.downloadUrl || 'Lỗi tạo Tunnel');
+        }
+      }
+    };
+    processAll();
+  }, [finalImage, recordedVideoBlob, capturedImages, customConfig.totalShots]);
 
   useEffect(() => {
     const bc = new SyncService(CHANNEL_NAME);
@@ -1353,47 +1421,24 @@ function CameraScreen() {
                 </div>
              ) : (
                 <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="absolute inset-0 z-40 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md overflow-y-auto p-4 custom-scrollbar">
-                   <div className="bg-white p-8 md:p-12 rounded-[2rem] flex flex-col md:flex-row items-center gap-10 shadow-2xl my-auto">
-                      <div className="flex flex-col items-center text-center">
-                          <div className="p-4 bg-white border-4 border-neutral-200 rounded-xl mb-6 shadow-sm">
-                             <QRCodeSVG value={sessionDlUrl || "https://neobooth.com/"} size={180} />
-                          </div>
-                          <h3 className="text-2xl font-black text-black tracking-tight mb-2">QUÉT MÃ ĐỂ TẢI</h3>
-                          <p className="text-neutral-500 font-medium mb-2 text-sm">{sessionDlUrl}</p>
-                          <p className="text-neutral-400 font-medium mb-6 text-xs italic">Điện thoại và máy tính phải cùng mạng WiFi</p>
-                          {finalImage && (
-                            <>
-                              {(window as any).electronAPI ? (
-                                <div className="bg-[#4ade80]/20 text-[#4ade80] border border-[#4ade80]/50 font-bold px-6 py-3 rounded-xl mb-4">
-                                  ✅ Đã lưu tự động vào máy tính
-                                </div>
-                              ) : null}
-                              <a href={finalImage} download="neobooth-strip.png" className="bg-amber-glow text-black font-bold uppercase tracking-widest px-8 py-4 rounded-xl flex items-center gap-3 hover:scale-105 transition-transform shadow-lg cursor-pointer mb-4">
-                                <Download className="w-5 h-5" />
-                                TẢI VỀ MÁY TÍNH 
-                              </a>
-                              
-                              <div className="w-full pt-4 border-t border-neutral-100">
-                                <p className="text-xs font-bold text-neutral-400 mb-2 uppercase tracking-widest">Tải ảnh gốc (Raw)</p>
-                                <div className="flex gap-2 justify-center">
-                                  {capturedImages.map((img, idx) => (
-                                    <a key={idx} href={img} download={`neobooth-raw-${idx+1}.jpg`} className="relative group cursor-pointer border-2 border-transparent hover:border-amber-glow rounded-lg overflow-hidden transition-all shadow-sm block w-12 h-12">
-                                      <img src={img} className="w-full h-full object-cover" alt={`Raw ${idx+1}`} />
-                                      <div className="absolute inset-0 bg-black/50 hidden group-hover:flex items-center justify-center">
-                                        <Download className="w-4 h-4 text-white" />
-                                      </div>
-                                    </a>
-                                  ))}
-                                </div>
-                              </div>
-                            </>
-                          )}
-                      </div>
+                   <div className="bg-white p-8 rounded-[2rem] flex flex-col items-center gap-8 shadow-2xl my-auto w-full max-w-md">
+                      
+                      {/* Frame ảnh hoàn chỉnh */}
                       {finalImage && (
-                         <div className="h-[400px] shrink-0 rounded-xl overflow-hidden shadow-sm hidden md:block">
-                            <img src={finalImage} className="h-full object-contain drop-shadow-xl" alt="Final Strip" />
-                         </div>
+                        <div className="w-full flex justify-center">
+                          <img src={finalImage} className="max-h-[45vh] object-contain drop-shadow-xl rounded-lg" alt="Final Strip" />
+                        </div>
                       )}
+
+                      {/* QR Code */}
+                      <div className="flex flex-col items-center text-center">
+                        <div className="p-4 bg-white border-4 border-neutral-200 rounded-xl mb-4 shadow-sm">
+                           <QRCodeSVG value={sessionDlUrl || "https://cgbooth.com/"} size={160} />
+                        </div>
+                        <h3 className="text-xl font-black text-black tracking-tight mb-1">QUÉT MÃ ĐỂ TẢI</h3>
+                        <p className="text-neutral-400 font-medium text-xs italic">Điện thoại và máy tính phải cùng mạng WiFi</p>
+                      </div>
+
                    </div>
                 </motion.div>
              )}
