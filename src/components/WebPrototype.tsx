@@ -1219,11 +1219,11 @@ function CameraScreen() {
           }
           setIsProcessing(true);
           broadcastState({ isProcessing: true });
-          setTimeout(() => {
-            setIsProcessing(false);
-            setIsSessionActive(false);
-            broadcastState({ isProcessing: false, isSessionActive: false });
-          }, 3000);
+          
+          // Không cần chờ 3 giây ảo nữa, cập nhật state luôn để bắt đầu render frame
+          setIsProcessing(false);
+          setIsSessionActive(false);
+          broadcastState({ isProcessing: false, isSessionActive: false });
         }
       }
     }
