@@ -837,6 +837,21 @@ function ControlScreen() {
     }
   };
 
+  const [saveDirectory, setSaveDirectory] = useState<string>('');
+
+  useEffect(() => {
+    if ((window as any).electronAPI && (window as any).electronAPI.getSaveDirectory) {
+      (window as any).electronAPI.getSaveDirectory().then((dir: string) => setSaveDirectory(dir));
+    }
+  }, []);
+
+  const handleChangeSaveDirectory = async () => {
+    if ((window as any).electronAPI && (window as any).electronAPI.selectDirectory) {
+      const newDir = await (window as any).electronAPI.selectDirectory();
+      if (newDir) setSaveDirectory(newDir);
+    }
+  };
+
   const resetSession = () => {
     if (cameraReady && channel) {
       channel.postMessage({ type: 'RESET_SESSION' });
@@ -880,7 +895,21 @@ function ControlScreen() {
       <div className="flex flex-col lg:flex-row gap-6 pb-8 min-h-[850px]">
         {/* Left Column: Config Builder & Strip Preview */}
         <div className="flex-[1.2] flex flex-col gap-4">
-                      <div className="card bg-black/50 border border-white/10 rounded-xl p-5 shrink-0 flex flex-row justify-between items-center">
+           
+           <div className="card bg-black/50 border border-white/10 rounded-xl p-5 shrink-0 flex flex-row justify-between items-center">
+              <div className="flex flex-col overflow-hidden mr-4">
+                <h2 className="card-title text-amber-glow">Nơi lưu ảnh & Video</h2>
+                <p className="text-[10px] font-mono text-white/50 mt-1 truncate" title={saveDirectory}>{saveDirectory || 'Mặc định (Pictures/CGBOOTH)'}</p>
+              </div>
+              <button 
+                onClick={handleChangeSaveDirectory} 
+                className="bg-white/10 shrink-0 text-white font-bold text-[10px] uppercase px-3 py-2 rounded-lg hover:bg-white/20 transition-colors"
+              >
+                Đổi thư mục
+              </button>
+           </div>
+
+           <div className="card bg-black/50 border border-white/10 rounded-xl p-5 shrink-0 flex flex-row justify-between items-center">
               <div className="flex flex-col">
                 <h2 className="card-title text-amber-glow">Cài đặt Frame</h2>
                 <p className="text-xs text-white/50 mt-1">{customConfig.name} ({customConfig.totalShots} ảnh)</p>
@@ -1131,7 +1160,7 @@ function CameraScreen() {
   };
 
   const doCountdown = (shotIndex: number) => {
-    let count = 3;
+    let count = 5;
     setCountdown(count);
     broadcastState({ countdown: count, currentShotIndex: shotIndex, isSessionActive: true });
     
@@ -1323,8 +1352,8 @@ function CameraScreen() {
         });
         
         if (result.success && result.publicTunnelUrl) {
-          // Tạo link QR trỏ về trang web tải ảnh (chứa base URL của Tunnel)
-          const webUrl = `https://cgbooth-web.vercel.app/?t=${encodeURIComponent(result.publicTunnelUrl)}`;
+          // Tạo link QR trỏ về trang web tải ảnh trên Vercel của người dùng
+          const webUrl = `https://neobooth-web.vercel.app/?t=${encodeURIComponent(result.publicTunnelUrl)}`;
           setSessionDlUrl(webUrl);
         } else {
           setSessionDlUrl(result.downloadUrl || 'Lỗi tạo Tunnel');
@@ -1421,23 +1450,31 @@ function CameraScreen() {
                 </div>
              ) : (
                 <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="absolute inset-0 z-40 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md overflow-y-auto p-4 custom-scrollbar">
-                   <div className="bg-white p-8 rounded-[2rem] flex flex-col items-center gap-8 shadow-2xl my-auto w-full max-w-md">
+                   <div className="bg-white p-8 md:p-12 rounded-[2rem] flex flex-row items-center justify-center gap-12 shadow-2xl my-auto w-full max-w-5xl">
                       
-                      {/* Frame ảnh hoàn chỉnh */}
+                      {/* Cột trái: QR Code */}
+                      <div className="flex flex-col items-center text-center shrink-0">
+                        <div className="p-4 bg-white border-4 border-neutral-200 rounded-xl mb-4 shadow-sm w-[240px] h-[240px] flex items-center justify-center">
+                           {sessionDlUrl && sessionDlUrl.startsWith('http') ? (
+                             <QRCodeSVG value={sessionDlUrl} size={200} />
+                           ) : (
+                             <div className="flex flex-col items-center justify-center text-neutral-400">
+                               <RefreshCw className="w-8 h-8 animate-spin mb-3 text-green-400" />
+                               <p className="text-xs font-bold text-center px-4">{sessionDlUrl || "Đang xử lý..."}</p>
+                             </div>
+                           )}
+                        </div>
+                        <h3 className="text-2xl font-black text-black tracking-tight mb-2">QUÉT MÃ ĐỂ TẢI</h3>
+                        <p className="text-neutral-500 font-medium text-sm">Tải Ảnh Ghép, Ảnh Gốc & Video Hậu Trường</p>
+                        <p className="text-neutral-400 font-medium text-xs italic mt-1">(Hỗ trợ tải bằng mạng 4G)</p>
+                      </div>
+
+                      {/* Cột phải: Frame ảnh hoàn chỉnh, phóng to */}
                       {finalImage && (
-                        <div className="w-full flex justify-center">
-                          <img src={finalImage} className="max-h-[45vh] object-contain drop-shadow-xl rounded-lg" alt="Final Strip" />
+                        <div className="flex justify-center shrink-0 h-[65vh]">
+                          <img src={finalImage} className="h-full object-contain drop-shadow-2xl rounded-xl border border-neutral-200" alt="Final Strip" />
                         </div>
                       )}
-
-                      {/* QR Code */}
-                      <div className="flex flex-col items-center text-center">
-                        <div className="p-4 bg-white border-4 border-neutral-200 rounded-xl mb-4 shadow-sm">
-                           <QRCodeSVG value={sessionDlUrl || "https://cgbooth.com/"} size={160} />
-                        </div>
-                        <h3 className="text-xl font-black text-black tracking-tight mb-1">QUÉT MÃ ĐỂ TẢI</h3>
-                        <p className="text-neutral-400 font-medium text-xs italic">Điện thoại và máy tính phải cùng mạng WiFi</p>
-                      </div>
 
                    </div>
                 </motion.div>
