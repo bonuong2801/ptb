@@ -105,8 +105,8 @@ function createWindow() {
     title: 'CGBOOTH - Admin',
     webPreferences: { 
       preload: path.join(__dirname, 'preload.cjs'),
-      nodeIntegration: true, 
-      contextIsolation: false, 
+      nodeIntegration: false, 
+      contextIsolation: true, 
       webSecurity: false 
     }
   });
@@ -127,8 +127,8 @@ function createWindow() {
     title: 'CGBOOTH - Customer',
     webPreferences: { 
       preload: path.join(__dirname, 'preload.cjs'),
-      nodeIntegration: true, 
-      contextIsolation: false, 
+      nodeIntegration: false, 
+      contextIsolation: true, 
       webSecurity: false 
     }
   });
