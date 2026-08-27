@@ -103,7 +103,12 @@ function createWindow() {
   adminWindow = new BrowserWindow({
     width: 1200, height: 800,
     title: 'CGBOOTH - Admin',
-    webPreferences: { nodeIntegration: true, contextIsolation: false, webSecurity: false }
+    webPreferences: { 
+      preload: path.join(__dirname, 'preload.cjs'),
+      nodeIntegration: true, 
+      contextIsolation: false, 
+      webSecurity: false 
+    }
   });
   adminWindow.setMenuBarVisibility(false);
   adminWindow.loadFile(path.join(__dirname, '../dist/index.html'), { search: 'mode=admin' });
@@ -120,7 +125,12 @@ function createWindow() {
     y: externalDisplay ? externalDisplay.bounds.y : 100,
     width: 1024, height: 768,
     title: 'CGBOOTH - Customer',
-    webPreferences: { nodeIntegration: true, contextIsolation: false, webSecurity: false }
+    webPreferences: { 
+      preload: path.join(__dirname, 'preload.cjs'),
+      nodeIntegration: true, 
+      contextIsolation: false, 
+      webSecurity: false 
+    }
   });
 
   customerWindow.setMenuBarVisibility(false);
