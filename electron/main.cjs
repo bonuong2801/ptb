@@ -117,6 +117,15 @@ function createWindow() {
     app.quit(); 
   });
 
+  // Không mở customer window tự động nữa
+}
+
+ipcMain.on('open-customer-screen', () => {
+  if (customerWindow) {
+    customerWindow.focus();
+    return;
+  }
+
   const displays = screen.getAllDisplays();
   const externalDisplay = displays.find(display => display.bounds.x !== 0 || display.bounds.y !== 0);
 
@@ -140,7 +149,7 @@ function createWindow() {
     customerWindow.focus();
   });
   customerWindow.on('closed', () => { customerWindow = null; });
-}
+});
 
 ipcMain.on('broadcast-sync', (event, data) => {
   if (adminWindow && event.sender !== adminWindow.webContents) adminWindow.webContents.send('sync-received', data);

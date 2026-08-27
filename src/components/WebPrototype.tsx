@@ -837,6 +837,49 @@ function ControlScreen() {
     }
   };
 
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [printCopies, setPrintCopies] = useState(1);
+
+  // Tự động mở cửa sổ in ảnh khi đã có ảnh hoàn chỉnh
+  useEffect(() => {
+    if (capturedImages.length === customConfig.totalShots && !isSessionActive && !isProcessing && finalImage) {
+      setIsPrintModalOpen(true);
+      setPrintCopies(1); // Reset số lượng in về 1
+    }
+  }, [capturedImages.length, customConfig.totalShots, isSessionActive, isProcessing, finalImage]);
+
+  const handlePrint = () => {
+    // Gọi lệnh in thông qua Electron hoặc API máy in (Tạm thời in thông qua trình duyệt/hệ điều hành)
+    console.log(`Đang in ${printCopies} bản...`);
+    setIsPrintModalOpen(false);
+    
+    // Tạo 1 cửa sổ mới chỉ chứa ảnh và tự động gọi window.print()
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(`
+        <html>
+          <head>
+            <style>
+              body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #fff; }
+              img { max-height: 100vh; max-width: 100vw; object-fit: contain; }
+              @media print {
+                @page { margin: 0; }
+                body { margin: 0; }
+              }
+            </style>
+          </head>
+          <body>
+            ${Array(printCopies).fill(`<img src="${finalImage}" />`).join('<div style="page-break-after: always;"></div>')}
+            <script>
+              window.onload = () => { window.print(); setTimeout(() => window.close(), 1000); }
+            </script>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+    }
+  };
+
   const [saveDirectory, setSaveDirectory] = useState<string>('');
 
   useEffect(() => {
@@ -1088,6 +1131,45 @@ function ControlScreen() {
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar min-h-[400px]">
                  <VisualFrameEditor config={customConfig} setConfig={setCustomConfig} />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Print Modal Overlay */}
+      <AnimatePresence>
+        {isPrintModalOpen && finalImage && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="bg-neutral-900 border border-white/10 p-8 rounded-2xl w-full max-w-md flex flex-col gap-6 shadow-2xl items-center">
+              <h2 className="text-2xl font-bold text-amber-glow uppercase tracking-widest text-center">IN ẢNH</h2>
+              
+              <div className="w-full bg-white/5 rounded-xl p-4 flex justify-center">
+                <img src={finalImage} alt="Preview" className="max-h-[30vh] object-contain rounded drop-shadow-lg" />
+              </div>
+
+              <div className="flex flex-col gap-2 w-full text-center mt-2">
+                <p className="text-sm text-white/70 uppercase tracking-widest">SỐ LƯỢNG BẢN IN</p>
+                <div className="flex items-center justify-center gap-6 mt-2">
+                  <button onClick={() => setPrintCopies(Math.max(1, printCopies - 1))} className="bg-white/10 hover:bg-white/20 text-white w-12 h-12 rounded-full flex items-center justify-center text-2xl transition-colors">-</button>
+                  <span className="text-5xl font-bold text-white w-16 text-center">{printCopies}</span>
+                  <button onClick={() => setPrintCopies(printCopies + 1)} className="bg-white/10 hover:bg-white/20 text-white w-12 h-12 rounded-full flex items-center justify-center text-2xl transition-colors">+</button>
+                </div>
+              </div>
+
+              <div className="flex gap-4 w-full mt-4">
+                <button 
+                  onClick={() => setIsPrintModalOpen(false)} 
+                  className="flex-1 bg-white/5 text-white/70 hover:text-white hover:bg-white/10 py-4 rounded-xl font-bold tracking-widest transition-colors uppercase"
+                >
+                  Bỏ qua
+                </button>
+                <button 
+                  onClick={handlePrint} 
+                  className="flex-[2] bg-amber-glow text-black hover:bg-amber-glow/80 py-4 rounded-xl font-bold tracking-widest transition-colors shadow-[0_0_20px_rgba(255,191,0,0.3)] uppercase text-lg"
+                >
+                  XÁC NHẬN IN
+                </button>
               </div>
             </motion.div>
           </motion.div>
