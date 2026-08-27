@@ -23,7 +23,7 @@ class SyncService {
       window.electronAPI.onSyncReceived((data) => {
         if (this.onMessageCallback) this.onMessageCallback(data);
       });
-    } else {
+    
       this.channel = new BroadcastChannel(channelName);
       this.channel.onmessage = (event) => {
         if (this.onMessageCallback) this.onMessageCallback(event.data);
@@ -112,7 +112,7 @@ const generateFinalImage = async (config: CustomFrameConfig, capturedImages: str
               if (imgAspect > slotAspect) {
                 sWidth = img.height * slotAspect;
                 sx = (img.width - sWidth) / 2;
-              } else {
+              
                 sHeight = img.width / slotAspect;
                 sy = (img.height - sHeight) / 2;
               }
@@ -144,7 +144,7 @@ const generateFinalImage = async (config: CustomFrameConfig, capturedImages: str
     const layerMode = config.frameLayering || 'above';
     if (layerMode === 'above') {
        drawPhotos().then(() => drawFrame()).then(() => resolve(canvas.toDataURL('image/png')));
-    } else {
+    
        drawFrame().then(() => drawPhotos()).then(() => resolve(canvas.toDataURL('image/png')));
     }
   });
@@ -490,7 +490,7 @@ export default function WebPrototype() {
     const mode = params.get('mode');
     if (mode === 'camera') {
       setViewMode('camera');
-    } else {
+    
       setViewMode('control');
     }
   }, []);
@@ -612,7 +612,7 @@ function ControlScreen() {
            if (result.success) {
               console.log('Session saved to PC successfully (Admin):', result.folderPath);
               if (result.downloadUrl) setSessionDlUrl(result.downloadUrl);
-           } else {
+           
               console.error('Failed to save to PC (Admin):', result.error);
               setSessionDlUrl('');
            }
@@ -703,7 +703,7 @@ function ControlScreen() {
     const retryInterval = setInterval(() => {
       if (!connectedRef.current) {
         bc.postMessage({ type: 'PING' });
-      } else {
+      
         clearInterval(retryInterval);
       }
     }, 1000);
@@ -726,7 +726,7 @@ function ControlScreen() {
                 } catch(e) {}
             }
             payloadConfig.frameImage = 'USE_INDEXEDDB';
-        } else {
+        
             prevFrameRef.current = null;
         }
 
@@ -778,7 +778,7 @@ function ControlScreen() {
       count -= 1;
       if (count > 0) {
         setCountdown(count);
-      } else {
+      
         clearInterval(timer);
         setCountdown(null);
         takePhotoLocal(shotIndex);
@@ -795,7 +795,7 @@ function ControlScreen() {
         canvas.width = 1280; canvas.height = 720;
         if (video && video.srcObject && video.readyState >= 2) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        } else {
+        
           ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.strokeStyle = '#333'; ctx.lineWidth = 2; ctx.beginPath();
           ctx.moveTo(0, 0); ctx.lineTo(canvas.width, canvas.height);
@@ -815,7 +815,7 @@ function ControlScreen() {
             setCurrentShotIndex(updated.length);
             doCountdownLocal(updated.length);
           }, 1000);
-        } else {
+        
           setIsProcessing(true);
           setTimeout(() => {
             setIsProcessing(false);
@@ -829,7 +829,7 @@ function ControlScreen() {
   const startSession = () => {
     if (cameraReady && channel) {
       channel.postMessage({ type: 'START_SESSION' });
-    } else {
+    
       setIsSessionActive(true);
       setCapturedImages([]);
       setCurrentShotIndex(0);
@@ -918,7 +918,7 @@ function ControlScreen() {
               onClick={() => {
                 if (window.electronAPI) {
                   window.electronAPI.openCustomerScreen();
-                } else {
+                
                   window.open('?mode=camera', '_blank');
                 }
               }}
@@ -1251,7 +1251,7 @@ function CameraScreen() {
       if (count > 0) {
         setCountdown(count);
         broadcastState({ countdown: count });
-      } else {
+      
         clearInterval(timer);
         setCountdown(null);
         broadcastState({ countdown: null });
@@ -1273,7 +1273,7 @@ function CameraScreen() {
         
         if (video && video.srcObject && video.readyState >= 2) {
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        } else {
+        
             ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height);
             ctx.strokeStyle = '#333'; ctx.lineWidth = 2; ctx.beginPath();
             ctx.moveTo(0, 0); ctx.lineTo(canvas.width, canvas.height);
@@ -1295,7 +1295,7 @@ function CameraScreen() {
             setCurrentShotIndex(updated.length);
             doCountdown(updated.length);
           }, 1000);
-        } else {
+        
           if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
             mediaRecorderRef.current.stop();
           }
@@ -1368,7 +1368,7 @@ function CameraScreen() {
          if (ctx) {
             if (video && video.readyState === 4) {
                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            } else {
+            
                ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height);
                ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '16px "Courier New"'; ctx.textAlign = 'center';
                ctx.fillText('SIMULATION MODE', canvas.width / 2, canvas.height / 2);
@@ -1410,7 +1410,7 @@ function CameraScreen() {
       generateFinalImage(customConfig, capturedImages).then(async data => {
         setFinalImage(data);
       });
-    } else {
+    
       setFinalImage(null);
       setSessionDlUrl('');
     }
@@ -1420,26 +1420,45 @@ function CameraScreen() {
     const processAll = async () => {
       if (!finalImage || !recordedVideoBlob || capturedImages.length !== customConfig.totalShots) return;
       
-      setSessionDlUrl('Đang đẩy ra Internet (LocalTunnel)...');
-      const videoBase64 = await blobToBase64(recordedVideoBlob);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const currentSessionName = `Session_${timestamp}`;
+      
+      // 1. TẠO MÃ QR NGAY LẬP TỨC (0.1 GIÂY) TRƯỚC KHI LÀM BẤT CỨ VIỆC GÌ
+      const webUrl = `https://neobooth-web.vercel.app/?id=${currentSessionName}`;
+      
 
+      // 2. CHẠY NGẦM UPLOAD LÊN MÂY (SUPABASE) VÀ LƯU XUỐNG Ổ CỨNG
+      
+      // Lưu xuống ổ cứng (vẫn cần thiết để chủ máy giữ file backup)
+      const videoBase64 = await blobToBase64(recordedVideoBlob);
       if ((window as any).electronAPI) {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const currentSessionName = `Session_${timestamp}`;
-        const result = await (window as any).electronAPI.saveSession({
+        (window as any).electronAPI.saveSession({
           sessionName: currentSessionName,
           finalImage: finalImage,
           rawImages: capturedImages,
           videoBase64: videoBase64
-        });
+        }); // Không cần await để đỡ mất thời gian
+      }
+
+      // Up lên mây Supabase
+      try {
+        const { createClient } = await import('@supabase/supabase-js');
+        const supabase = createClient('https://riqgdjwcvritldlsboji.supabase.co', 'sb_publishable_94Aov-K-1KUb_EVj2yxe7g_PJSLePRW');
         
-        if (result.success && result.publicTunnelUrl) {
-          // Tạo link QR trỏ về trang web tải ảnh trên Vercel của người dùng
-          const webUrl = `https://neobooth-web.vercel.app/?t=${encodeURIComponent(result.publicTunnelUrl)}`;
-          setSessionDlUrl(webUrl);
-        } else {
-          setSessionDlUrl(result.downloadUrl || 'Lỗi tạo Tunnel');
-        }
+        // Up video
+        supabase.storage.from('cgbooth').upload(`${currentSessionName}/bts_video.webm`, recordedVideoBlob, { contentType: 'video/webm' });
+        
+        // Up final image
+        const finalBlob = await (await fetch(finalImage)).blob();
+        supabase.storage.from('cgbooth').upload(`${currentSessionName}/final_strip.jpg`, finalBlob, { contentType: 'image/jpeg' });
+        
+        // Up raw images
+        capturedImages.forEach(async (img, idx) => {
+           const rawBlob = await (await fetch(img)).blob();
+           supabase.storage.from('cgbooth').upload(`${currentSessionName}/raw_photo_${idx + 1}.jpg`, rawBlob, { contentType: 'image/jpeg' });
+        });
+      } catch (err) {
+        console.error("Lỗi upload Supabase:", err);
       }
     };
     processAll();
