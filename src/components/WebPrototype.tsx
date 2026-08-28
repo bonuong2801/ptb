@@ -608,28 +608,22 @@ function ControlScreen() {
         // --- ELECTRON AUTO-SAVE LOGIC ---
         if ((window as any).electronAPI && savedSessionRef.current !== currentSessionName) {
            savedSessionRef.current = currentSessionName;
-           (window as any).electronAPI.saveSession({
+           const result = await (window as any).electronAPI.saveSession({
               sessionName: currentSessionName,
               finalImage: data,
-              rawImages: capturedImages,
-              videoBase64: null
+              rawImages: capturedImages
            });
            
-           const webUrl = `https://neobooth-web.vercel.app/?id=${currentSessionName}`;
-           setSessionDlUrl(webUrl);
-
-           try {
-             const { createClient } = await import("@supabase/supabase-js");
-             const supabase = createClient("https://riqgdjwcvritldlsboji.supabase.co", "sb_publishable_94Aov-K-1KUb_EVj2yxe7g_PJSLePRW");
-             
-             const finalBlob = await (await fetch(data)).blob();
-             supabase.storage.from("cgbooth").upload(`${currentSessionName}/final_strip.jpg`, finalBlob, { contentType: "image/jpeg" });
-             
-             capturedImages.forEach(async (img, idx) => {
-                const rawBlob = await (await fetch(img)).blob();
-                supabase.storage.from("cgbooth").upload(`${currentSessionName}/raw_photo_${idx + 1}.jpg`, rawBlob, { contentType: "image/jpeg" });
-             });
-           } catch(e) { console.error("Loi Supabase Admin", e); }
+           if ((window as any).electronAPI.getTunnelUrl) {
+             const tunnelUrl = await (window as any).electronAPI.getTunnelUrl();
+             if (tunnelUrl) {
+                setSessionDlUrl(`${tunnelUrl}?id=${currentSessionName}`);
+             } else {
+                setSessionDlUrl("Đang tạo link, vui lòng thử lại...");
+             }
+           } else {
+             setSessionDlUrl("");
+           }
         }
       });
     } else if (capturedImages.length === 0) {
@@ -1410,20 +1404,7 @@ function CameraScreen() {
     return () => clearInterval(interval);
   }, [isProcessing]);
 
-  // Helpers for Cloudinary
-  const uploadToCloud = async (base64Data: string, type: 'image' | 'video' = 'image'): Promise<string | null> => {
-    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-    const preset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-    if (!cloudName || !preset) return null;
-    const formData = new FormData();
-    formData.append('file', base64Data);
-    formData.append('upload_preset', preset);
-    try {
-      const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${type}/upload`, { method: 'POST', body: formData });
-      const data = await res.json();
-      return data.public_id || null;
-    } catch(e) { return null; }
-  };
+
 
   const blobToBase64 = (blob: Blob): Promise<string> => {
     return new Promise((resolve) => {
@@ -1451,9 +1432,6 @@ function CameraScreen() {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const currentSessionName = `Session_${timestamp}`;
       
-      const webUrl = `https://neobooth-web.vercel.app/?id=${currentSessionName}`;
-      setSessionDlUrl(webUrl);
-
       const videoBase64 = await blobToBase64(recordedVideoBlob);
       if ((window as any).electronAPI) {
         (window as any).electronAPI.saveSession({
@@ -1462,23 +1440,17 @@ function CameraScreen() {
           rawImages: capturedImages,
           videoBase64: videoBase64
         });
-      }
-
-      try {
-        const { createClient } = await import('@supabase/supabase-js');
-        const supabase = createClient('https://riqgdjwcvritldlsboji.supabase.co', 'sb_publishable_94Aov-K-1KUb_EVj2yxe7g_PJSLePRW');
         
-        supabase.storage.from('cgbooth').upload(`${currentSessionName}/bts_video.webm`, recordedVideoBlob, { contentType: 'video/webm' });
-        
-        const finalBlob = await (await fetch(finalImage)).blob();
-        supabase.storage.from('cgbooth').upload(`${currentSessionName}/final_strip.jpg`, finalBlob, { contentType: 'image/jpeg' });
-        
-        capturedImages.forEach(async (img, idx) => {
-           const rawBlob = await (await fetch(img)).blob();
-           supabase.storage.from('cgbooth').upload(`${currentSessionName}/raw_photo_${idx + 1}.jpg`, rawBlob, { contentType: 'image/jpeg' });
-        });
-      } catch (err) {
-        console.error("Lỗi upload Supabase:", err);
+        if ((window as any).electronAPI.getTunnelUrl) {
+           const tunnelUrl = await (window as any).electronAPI.getTunnelUrl();
+           if (tunnelUrl) {
+              setSessionDlUrl(`${tunnelUrl}?id=${currentSessionName}`);
+           } else {
+              setSessionDlUrl("Đang tạo link, vui lòng thử lại...");
+           }
+        }
+      } else {
+        setSessionDlUrl("");
       }
     };
     processAll();

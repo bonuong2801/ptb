@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld(
     broadcastSync: (data) => ipcRenderer.send('broadcast-sync', data),
     getServerUrl: () => ipcRenderer.invoke('get-server-url'),
     getSaveDirectory: () => ipcRenderer.invoke('get-save-directory'),
+  getTunnelUrl: () => ipcRenderer.invoke('get-tunnel-url'),
     selectDirectory: () => ipcRenderer.invoke('select-directory'),
     
     // Printer APIs

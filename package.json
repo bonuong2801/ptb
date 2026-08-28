@@ -19,9 +19,9 @@
     "@supabase/supabase-js": "^2.112.4",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "cloudflared": "^0.7.3",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
-    "localtunnel": "^2.0.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "qrcode.react": "^4.2.0",
@@ -53,7 +53,8 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "gallery-template/**/*"
     ],
     "win": {
       "target": [
@@ -70,6 +71,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
-    }
+    },
+    "asarUnpack": [
+      "node_modules/cloudflared/**/*"
+    ]
   }
 }

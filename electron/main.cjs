@@ -108,6 +108,7 @@ app.whenReady().then(async () => {
   const currentDir = getSaveDirectory();
   if (!fs.existsSync(currentDir)) fs.mkdirSync(currentDir, { recursive: true });
   
+  photoServer.use('/', express.static(path.join(__dirname, '../gallery-template')));
   photoServer.use('/session', express.static(currentDir));
   
   // CORS needed for the web app to fetch from localtunnel
@@ -135,6 +136,8 @@ app.whenReady().then(async () => {
 
   createWindow();
 });
+
+ipcMain.handle('get-tunnel-url', () => publicUrl);
 
 ipcMain.handle('get-save-directory', () => {
   return getSaveDirectory();
