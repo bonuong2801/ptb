@@ -1,15 +1,19 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Camera, RefreshCw, ExternalLink, Monitor, LayoutDashboard, Upload, QrCode, Download, Trash2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { QRCodeSVG } from 'qrcode.react';
+
 
 declare global {
   interface Window {
     electronAPI?: {
-      saveSession: (data: any) => Promise<{success: boolean, folderPath?: string, error?: string}>;
-      openCustomerScreen: () => void;
+      saveSession: (data: any) => Promise<{success: boolean, folderPath?: string, downloadUrl?: string, mode?: string, sessionName?: string, error?: string}>;
+      openCustomerScreen: () => Promise<{success: boolean, error?: string}>;
       broadcastSync: (data: any) => void;
       onSyncReceived: (callback: (data: any) => void) => void;
+      getServerUrl?: () => Promise<string>;
+      getSaveDirectory?: () => Promise<string>;
+      selectDirectory?: () => Promise<string | null>;
+      getTunnelUrl?: () => Promise<string | null>;
       getPrinters?: () => Promise<any[]>;
       printImage?: (data: any) => Promise<{success: boolean, error?: string}>;
       getSavedPrinter?: () => Promise<string>;
@@ -147,9 +151,9 @@ const generateFinalImage = async (config: CustomFrameConfig, capturedImages: str
 
     const layerMode = config.frameLayering || 'above';
     if (layerMode === 'above') {
-       drawPhotos().then(() => drawFrame()).then(() => resolve(canvas.toDataURL('image/png')));
+       drawPhotos().then(() => drawFrame()).then(() => resolve(canvas.toDataURL('image/jpeg', 0.92)));
     } else {
-       drawFrame().then(() => drawPhotos()).then(() => resolve(canvas.toDataURL('image/png')));
+       drawFrame().then(() => drawPhotos()).then(() => resolve(canvas.toDataURL('image/jpeg', 0.92)));
     }
   });
 };
@@ -596,6 +600,7 @@ function ControlScreen() {
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const processingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   useEffect(() => {
     if (capturedImages.length === customConfig.totalShots && capturedImages.length > 0 && !isProcessing) {
@@ -604,31 +609,18 @@ function ControlScreen() {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const currentSessionName = `Session_${timestamp}`;
         
-        
         // --- ELECTRON AUTO-SAVE LOGIC ---
-        if ((window as any).electronAPI && savedSessionRef.current !== currentSessionName) {
+        if (window.electronAPI && savedSessionRef.current !== currentSessionName) {
            savedSessionRef.current = currentSessionName;
-           const result = await (window as any).electronAPI.saveSession({
+           await window.electronAPI.saveSession({
               sessionName: currentSessionName,
               finalImage: data,
               rawImages: capturedImages
            });
-           
-           if ((window as any).electronAPI.getTunnelUrl) {
-             const tunnelUrl = await (window as any).electronAPI.getTunnelUrl();
-             if (tunnelUrl) {
-                setSessionDlUrl(`${tunnelUrl}?id=${currentSessionName}`);
-             } else {
-                setSessionDlUrl("Đang tạo link, vui lòng thử lại...");
-             }
-           } else {
-             setSessionDlUrl("");
-           }
         }
       });
     } else if (capturedImages.length === 0) {
       setFinalImage(null);
-      setSessionDlUrl('');
       savedSessionRef.current = null;
     }
   }, [capturedImages, customConfig, isProcessing]);
@@ -660,6 +652,9 @@ function ControlScreen() {
 
   useEffect(() => {
     if (cameraReady) {
+        if (previewStream) {
+          previewStream.getTracks().forEach(t => t.stop());
+        }
         setPreviewStream(null);
         if (videoRef.current) videoRef.current.srcObject = null;
         return;
@@ -686,13 +681,17 @@ function ControlScreen() {
     const bc = new SyncService(CHANNEL_NAME);
     setChannel(bc);
     const connectedRef = { current: false };
+    let lastPongTime = 0;
 
     bc.onMessage((data) => {
       const { type, payload } = data;
       if (type === 'PONG') {
-        connectedRef.current = true;
-        setCameraReady(true);
-        setSyncRequest(prev => prev + 1);
+        lastPongTime = Date.now();
+        if (!connectedRef.current) {
+          connectedRef.current = true;
+          setCameraReady(true);
+          setSyncRequest(prev => prev + 1);
+        }
       } else if (type === 'LIVE_FRAME' && payload) {
         setLiveFrame(payload.image);
       } else if (type === 'SESSION_STATE' && payload) {
@@ -704,9 +703,10 @@ function ControlScreen() {
       }
     });
 
-    // Gửi PING lặp lại mỗi 1s cho tới khi nhận được PONG — tránh trường hợp
-    // gói tin đầu tiên bị rơi do timing (Customer Screen mở sau/tải chậm).
-    // Ngừng lại ngay khi kết nối thành công.
+    // Gửi PING lặp lại mỗi 1s cho tới khi nhận được PONG lần đầu.
+    // Sau khi kết nối, chuyển sang heartbeat 5s:
+    //   - Gửi PING mỗi 5s để kiểm tra Customer Screen còn sống không.
+    //   - Nếu không nhận PONG trong 10s → coi như disconnect, reset cameraReady.
     bc.postMessage({ type: 'PING' });
     const retryInterval = setInterval(() => {
       if (!connectedRef.current) {
@@ -716,7 +716,21 @@ function ControlScreen() {
       }
     }, 1000);
 
-    return () => { clearInterval(retryInterval); bc.close(); };
+    // Heartbeat sau khi đã kết nối
+    const heartbeatInterval = setInterval(() => {
+      if (connectedRef.current) {
+        bc.postMessage({ type: 'PING' });
+        // Nếu đã 10s không nhận PONG → Customer Screen đã đóng
+        if (lastPongTime > 0 && Date.now() - lastPongTime > 10000) {
+          connectedRef.current = false;
+          lastPongTime = 0;
+          setCameraReady(false);
+          setLiveFrame(null);
+        }
+      }
+    }, 5000);
+
+    return () => { clearInterval(retryInterval); clearInterval(heartbeatInterval); bc.close(); };
   }, []);
 
   // Broadcast Heavy Assets (Config & Captured Images)
@@ -825,7 +839,8 @@ function ControlScreen() {
           }, 1000);
         } else {
           setIsProcessing(true);
-          setTimeout(() => {
+          processingTimeoutRef.current = setTimeout(() => {
+            processingTimeoutRef.current = null;
             setIsProcessing(false);
             setIsSessionActive(false);
           }, 1500);
@@ -858,14 +873,14 @@ function ControlScreen() {
 
   const handlePrint = async () => {
     if (!selectedPrinter) {
-      alert("Vui long chon may in o cot ben trai!");
+      alert("Vui lòng chọn máy in ở cột bên trái!");
       return;
     }
-    console.log("Dang in...");
+    console.log("Đang in...");
     setIsPrintModalOpen(false);
-    if ((window as any).electronAPI && (window as any).electronAPI.printImage) {
-      const result = await (window as any).electronAPI.printImage({ imageBase64: finalImage, copies: printCopies, printerName: selectedPrinter });
-      if (!result.success) alert("Loi khi in: " + result.error);
+    if (window.electronAPI?.printImage) {
+      const result = await window.electronAPI.printImage({ imageBase64: finalImage, copies: printCopies, printerName: selectedPrinter });
+      if (!result.success) alert("Lỗi khi in: " + result.error);
     }
   };
 
@@ -874,15 +889,15 @@ function ControlScreen() {
   const [selectedPrinter, setSelectedPrinter] = useState<string>('');
 
   useEffect(() => {
-    if ((window as any).electronAPI) {
-      if ((window as any).electronAPI.getSaveDirectory) {
-        (window as any).electronAPI.getSaveDirectory().then((dir: string) => setSaveDirectory(dir));
+    if (window.electronAPI) {
+      if (window.electronAPI.getSaveDirectory) {
+        window.electronAPI.getSaveDirectory().then((dir: string) => setSaveDirectory(dir));
       }
-      if ((window as any).electronAPI.getPrinters) {
-        (window as any).electronAPI.getPrinters().then((p: any[]) => setPrinters(p));
+      if (window.electronAPI.getPrinters) {
+        window.electronAPI.getPrinters().then((p: any[]) => setPrinters(p));
       }
-      if ((window as any).electronAPI.getSavedPrinter) {
-        (window as any).electronAPI.getSavedPrinter().then((p: string) => {
+      if (window.electronAPI.getSavedPrinter) {
+        window.electronAPI.getSavedPrinter().then((p: string) => {
           if (p) setSelectedPrinter(p);
         });
       }
@@ -892,14 +907,14 @@ function ControlScreen() {
   const handlePrinterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const name = e.target.value;
     setSelectedPrinter(name);
-    if ((window as any).electronAPI && (window as any).electronAPI.savePrinter) {
-      (window as any).electronAPI.savePrinter(name);
+    if (window.electronAPI?.savePrinter) {
+      window.electronAPI.savePrinter(name);
     }
   };
 
   const handleChangeSaveDirectory = async () => {
-    if ((window as any).electronAPI && (window as any).electronAPI.selectDirectory) {
-      const newDir = await (window as any).electronAPI.selectDirectory();
+    if (window.electronAPI?.selectDirectory) {
+      const newDir = await window.electronAPI.selectDirectory();
       if (newDir) setSaveDirectory(newDir);
     }
   };
@@ -907,6 +922,10 @@ function ControlScreen() {
   const resetSession = () => {
     if (cameraReady && channel) {
       channel.postMessage({ type: 'RESET_SESSION' });
+    }
+    if (processingTimeoutRef.current) {
+      clearTimeout(processingTimeoutRef.current);
+      processingTimeoutRef.current = null;
     }
     setCapturedImages([]);
     setCurrentShotIndex(0);
@@ -1083,16 +1102,13 @@ function ControlScreen() {
              <div className="card bg-black/50 border border-white/10 rounded-xl p-5 flex-1 flex flex-col h-40">
                 {capturedImages.length === customConfig.totalShots && !isProcessing ? (
                   <div className="flex items-center gap-4 h-full">
-                    <div className="bg-white p-2 rounded-lg shrink-0">
-                      <QRCodeSVG value={sessionDlUrl || "https://cgbooth.com/"} size={80} />
-                    </div>
                     <div className="flex flex-col justify-center">
-                      <h2 className="text-amber-glow font-bold mb-1 uppercase tracking-widest text-sm">Session Complete</h2>
-                      <p className="text-neutral-400 text-xs mb-1">Mã QR khách hàng đã sẵn sàng.</p>
-                      {finalImage && (window as any).electronAPI ? (
-                        <p className="text-[#4ade80] text-xs font-bold">✅ Đã lưu ảnh vào ổ cứng</p>
+                      <h2 className="text-amber-glow font-bold mb-1 uppercase tracking-widest text-lg">Session Complete</h2>
+                      <p className="text-neutral-400 text-sm mb-2">Đã tự động hiển thị bảng in ảnh.</p>
+                      {finalImage && window.electronAPI ? (
+                        <p className="text-[#4ade80] text-sm font-bold">✅ Đã lưu ảnh vào ổ cứng</p>
                       ) : (
-                        <a href={finalImage || '#'} download="neobooth-strip.png" className="text-white text-xs underline underline-offset-2">Tải về thủ công</a>
+                        <a href={finalImage || '#'} download="neobooth-strip.png" className="text-white text-sm underline underline-offset-2">Tải về thủ công</a>
                       )}
                     </div>
                   </div>
@@ -1229,7 +1245,6 @@ function CameraScreen() {
   const [flash, setFlash] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [finalImage, setFinalImage] = useState<string | null>(null);
-  const [sessionDlUrl, setSessionDlUrl] = useState<string>('');
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1416,13 +1431,11 @@ function CameraScreen() {
 
   useEffect(() => {
     if (capturedImages.length === customConfig.totalShots && capturedImages.length > 0) {
-      setSessionDlUrl('Đang tạo ảnh ghép...');
       generateFinalImage(customConfig, capturedImages).then(async data => {
         setFinalImage(data);
       });
     } else {
       setFinalImage(null);
-      setSessionDlUrl('');
     }
   }, [capturedImages, customConfig]);
 
@@ -1433,28 +1446,22 @@ function CameraScreen() {
       const currentSessionName = `Session_${timestamp}`;
       
       const videoBase64 = await blobToBase64(recordedVideoBlob);
-      if ((window as any).electronAPI) {
-        (window as any).electronAPI.saveSession({
+      if (window.electronAPI) {
+        await window.electronAPI.saveSession({
           sessionName: currentSessionName,
           finalImage: finalImage,
           rawImages: capturedImages,
           videoBase64: videoBase64
         });
-        
-        if ((window as any).electronAPI.getTunnelUrl) {
-           const tunnelUrl = await (window as any).electronAPI.getTunnelUrl();
-           if (tunnelUrl) {
-              setSessionDlUrl(`${tunnelUrl}?id=${currentSessionName}`);
-           } else {
-              setSessionDlUrl("Đang tạo link, vui lòng thử lại...");
-           }
-        }
-      } else {
-        setSessionDlUrl("");
       }
     };
     processAll();
   }, [finalImage, recordedVideoBlob, capturedImages, customConfig.totalShots]);
+
+  const actionsRef = useRef({ beginSession, resetLocalSession });
+  useEffect(() => {
+    actionsRef.current = { beginSession, resetLocalSession };
+  }, [beginSession, resetLocalSession]);
 
   useEffect(() => {
     const bc = new SyncService(CHANNEL_NAME);
@@ -1476,13 +1483,15 @@ function CameraScreen() {
         }
         setCustomConfig(incomingConfig);
       } else if (type === 'SELECT_DEVICE' && payload) {
-        if (payload.deviceId !== selectedDeviceId) {
-           setSelectedDeviceId(payload.deviceId);
-        }
+        // Use functional state update to avoid stale closure on selectedDeviceId
+        setSelectedDeviceId(prev => {
+           if (payload.deviceId !== prev) return payload.deviceId;
+           return prev;
+        });
       } else if (type === 'START_SESSION') {
-        beginSession();
+        actionsRef.current.beginSession();
       } else if (type === 'RESET_SESSION') {
-        resetLocalSession();
+        actionsRef.current.resetLocalSession();
       }
     });
 
@@ -1543,32 +1552,17 @@ function CameraScreen() {
                 </div>
              ) : (
                 <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="absolute inset-0 z-40 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md overflow-y-auto p-4 custom-scrollbar">
-                   <div className="bg-white p-8 md:p-12 rounded-[2rem] flex flex-row items-center justify-center gap-12 shadow-2xl my-auto w-full max-w-5xl">
-                      
-                      {/* Cột trái: QR Code */}
-                      <div className="flex flex-col items-center text-center shrink-0">
-                        <div className="p-4 bg-white border-4 border-neutral-200 rounded-xl mb-4 shadow-sm w-[240px] h-[240px] flex items-center justify-center">
-                           {sessionDlUrl && sessionDlUrl.startsWith('http') ? (
-                             <QRCodeSVG value={sessionDlUrl} size={200} />
-                           ) : (
-                             <div className="flex flex-col items-center justify-center text-neutral-400">
-                               <RefreshCw className="w-8 h-8 animate-spin mb-3 text-green-400" />
-                               <p className="text-xs font-bold text-center px-4">{sessionDlUrl || "Đang xử lý..."}</p>
-                             </div>
-                           )}
-                        </div>
-                        <h3 className="text-2xl font-black text-black tracking-tight mb-2">QUÉT MÃ ĐỂ TẢI</h3>
-                        <p className="text-neutral-500 font-medium text-sm">Tải Ảnh Ghép, Ảnh Gốc & Video Hậu Trường</p>
-                        <p className="text-neutral-400 font-medium text-xs italic mt-1">(Hỗ trợ tải bằng mạng 4G)</p>
+                   <div className="bg-white p-8 md:p-12 rounded-[2rem] flex flex-col items-center justify-center gap-8 shadow-2xl my-auto w-full max-w-4xl">
+                      <div className="flex flex-col items-center text-center">
+                        <h3 className="text-4xl font-black text-black tracking-tight mb-2 uppercase">Cảm ơn bạn!</h3>
+                        <p className="text-neutral-500 font-medium text-xl">Vui lòng nhận ảnh in tại quầy</p>
                       </div>
 
-                      {/* Cột phải: Frame ảnh hoàn chỉnh, phóng to */}
                       {finalImage && (
-                        <div className="flex justify-center shrink-0 h-[65vh]">
+                        <div className="flex justify-center w-full h-[65vh]">
                           <img src={finalImage} className="h-full object-contain drop-shadow-2xl rounded-xl border border-neutral-200" alt="Final Strip" />
                         </div>
                       )}
-
                    </div>
                 </motion.div>
              )}

@@ -1,8 +1,7 @@
-const { app, BrowserWindow, ipcMain, screen, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const express = require('express');
 
 let adminWindow = null;
 let customerWindow = null;
@@ -42,9 +41,10 @@ ipcMain.handle('save-printer', (event, printerName) => {
   return true;
 });
 
+// Fix #15: Bỏ nodeIntegration: true ở printWindow
 ipcMain.handle('print-image', async (event, { imageBase64, copies, printerName }) => {
   try {
-    const printWindow = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true } });
+    const printWindow = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } });
     const htmlContent = `
       <html>
         <head>
@@ -84,70 +84,39 @@ ipcMain.handle('print-image', async (event, { imageBase64, copies, printerName }
   }
 });
 
-// -------------------------------------------------------------
-// LOCAL PHOTO SERVER
-// -------------------------------------------------------------
-const SERVER_PORT = 3001;
-const photoServer = express();
 
-function getLocalIP() {
-  const nets = os.networkInterfaces();
-  for (const ifaces of Object.values(nets)) {
-    for (const net of ifaces) {
-      if (net.family === 'IPv4' && !net.internal) return net.address;
-    }
-  }
-  return 'localhost';
-}
-
-let localTunnelInstance = null;
-let publicUrl = null;
 
 // Serve tĩnh toàn bộ thư mục CGBOOTH
 app.whenReady().then(async () => {
   const currentDir = getSaveDirectory();
   if (!fs.existsSync(currentDir)) fs.mkdirSync(currentDir, { recursive: true });
-  
-  photoServer.use('/', express.static(path.join(__dirname, '../gallery-template')));
-  photoServer.use('/session', express.static(currentDir));
-  
-  // CORS needed for the web app to fetch from localtunnel
-  photoServer.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
-    next();
-  });
 
-  photoServer.listen(SERVER_PORT, '0.0.0.0', async () => {
-    console.log(`[CGBOOTH] Photo server running at http://${getLocalIP()}:${SERVER_PORT}`);
-    try {
-      const localtunnel = require('localtunnel');
-      localTunnelInstance = await localtunnel({ port: SERVER_PORT });
-      publicUrl = localTunnelInstance.url;
-      console.log(`[CGBOOTH] Public Tunnel running at: ${publicUrl}`);
-      
-      localTunnelInstance.on('close', () => {
-        console.log('[CGBOOTH] Tunnel closed');
-      });
-    } catch (e) {
-      console.error('[CGBOOTH] Failed to start Localtunnel:', e);
-    }
+  // Fix #2: Đăng ký custom protocol để serve file local thay vì webSecurity: false
+  protocol.registerFileProtocol('cgbooth', (request, callback) => {
+    const url = request.url.replace('cgbooth://', '');
+    const filePath = path.normalize(decodeURIComponent(url));
+    callback({ path: filePath });
   });
 
   createWindow();
 });
-
-ipcMain.handle('get-tunnel-url', () => publicUrl);
 
 ipcMain.handle('get-save-directory', () => {
   return getSaveDirectory();
 });
 
 ipcMain.handle('select-directory', async (event) => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(adminWindow, {
+  // Fix #16: Guard null cho adminWindow
+  const parentWindow = adminWindow || null;
+  const options = {
     title: 'Chọn thư mục lưu ảnh của CGBOOTH',
     properties: ['openDirectory', 'createDirectory']
-  });
+  };
+  const result = parentWindow
+    ? await dialog.showOpenDialog(parentWindow, options)
+    : await dialog.showOpenDialog(options);
+
+  const { canceled, filePaths } = result;
   
   if (!canceled && filePaths.length > 0) {
     const newDir = filePaths[0];
@@ -157,23 +126,49 @@ ipcMain.handle('select-directory', async (event) => {
       fs.mkdirSync(newDir, { recursive: true });
     }
     
-    photoServer._router.stack = photoServer._router.stack.filter(r => r.name !== 'serveStatic');
-    photoServer.use('/session', express.static(newDir));
-    
     return newDir;
   }
   return null;
 });
 
 function createWindow() {
+  // --- 1. Tạo Splash Window ---
+  const splashWindow = new BrowserWindow({
+    width: 800, height: 600,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    resizable: false,
+    center: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+  
+  splashWindow.loadFile(path.join(__dirname, 'splash.html'));
+
+  // --- 2. Tạo Admin Window (Ẩn) ---
   adminWindow = new BrowserWindow({
     width: 1200, height: 800,
     title: 'CGBOOTH - Admin',
+    show: false, // Ẩn lúc khởi động
     webPreferences: { 
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false, 
       contextIsolation: true, 
-      webSecurity: false 
+      webSecurity: true
+    }
+  });
+
+  // --- 3. Lắng nghe Splash kết thúc ---
+  ipcMain.once('splash-finished', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close();
+    }
+    if (adminWindow && !adminWindow.isDestroyed()) {
+      adminWindow.show();
+      adminWindow.focus();
     }
   });
   adminWindow.setMenuBarVisibility(false);
@@ -182,47 +177,50 @@ function createWindow() {
     adminWindow = null;
     app.quit(); 
   });
-
-  // Không mở customer window tự động nữa
 }
 
-ipcMain.on('open-customer-screen', () => {
-  if (customerWindow) {
-    customerWindow.focus();
-    return;
-  }
-
-  const displays = screen.getAllDisplays();
-  const externalDisplay = displays.find(display => display.bounds.x !== 0 || display.bounds.y !== 0);
-
-  customerWindow = new BrowserWindow({
-    x: externalDisplay ? externalDisplay.bounds.x : 100,
-    y: externalDisplay ? externalDisplay.bounds.y : 100,
-    width: 1024, height: 768,
-    title: 'CGBOOTH - Customer',
-    webPreferences: { 
-      preload: path.join(__dirname, 'preload.cjs'),
-      nodeIntegration: false, 
-      contextIsolation: true, 
-      webSecurity: false 
+// Fix #9: Đổi ipcMain.on → ipcMain.handle để renderer có thể nhận lỗi
+ipcMain.handle('open-customer-screen', async () => {
+  try {
+    if (customerWindow) {
+      customerWindow.focus();
+      return { success: true };
     }
-  });
 
-  customerWindow.setMenuBarVisibility(false);
-  customerWindow.loadFile(path.join(__dirname, '../dist/index.html'), { search: 'mode=camera' });
-  customerWindow.webContents.on('did-finish-load', () => {
-    customerWindow.show();
-    customerWindow.focus();
-  });
-  customerWindow.on('closed', () => { customerWindow = null; });
+    const displays = screen.getAllDisplays();
+    const externalDisplay = displays.find(display => display.bounds.x !== 0 || display.bounds.y !== 0);
+
+    customerWindow = new BrowserWindow({
+      x: externalDisplay ? externalDisplay.bounds.x : 100,
+      y: externalDisplay ? externalDisplay.bounds.y : 100,
+      width: 1024, height: 768,
+      title: 'CGBOOTH - Customer',
+      webPreferences: { 
+        preload: path.join(__dirname, 'preload.cjs'),
+        nodeIntegration: false, 
+        contextIsolation: true, 
+        webSecurity: true  // Fix #2: Bật lại webSecurity
+      }
+    });
+
+    customerWindow.setMenuBarVisibility(false);
+    customerWindow.loadFile(path.join(__dirname, '../dist/index.html'), { search: 'mode=camera' });
+    customerWindow.webContents.on('did-finish-load', () => {
+      customerWindow.show();
+      customerWindow.focus();
+    });
+    customerWindow.on('closed', () => { customerWindow = null; });
+    return { success: true };
+  } catch (err) {
+    console.error('[CGBOOTH] Failed to open customer screen:', err);
+    return { success: false, error: err.message };
+  }
 });
 
 ipcMain.on('broadcast-sync', (event, data) => {
   if (adminWindow && event.sender !== adminWindow.webContents) adminWindow.webContents.send('sync-received', data);
   if (customerWindow && event.sender !== customerWindow.webContents) customerWindow.webContents.send('sync-received', data);
 });
-
-ipcMain.handle('get-server-url', () => `http://${getLocalIP()}:${SERVER_PORT}`);
 
 ipcMain.handle('save-session', async (event, { sessionName, finalImage, rawImages, videoBase64 }) => {
   try {
@@ -249,15 +247,9 @@ ipcMain.handle('save-session', async (event, { sessionName, finalImage, rawImage
       fs.writeFileSync(path.join(targetDir, 'bts_video.webm'), base64Video, { encoding: 'base64' });
     }
 
-    const downloadUrl = publicUrl 
-        ? `${publicUrl}/session/${safeSessionName}/final_strip.jpg`
-        : `http://${getLocalIP()}:${SERVER_PORT}/session/${safeSessionName}/final_strip.jpg`;
-        
     return { 
         success: true, 
         folderPath: targetDir, 
-        downloadUrl,
-        publicTunnelUrl: publicUrl ? `${publicUrl}/session/${safeSessionName}` : null,
         sessionName: safeSessionName
     };
   } catch (error) {

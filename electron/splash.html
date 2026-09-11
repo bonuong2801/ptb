@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CGBOOTH Splash</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: transparent; 
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            -webkit-app-region: drag;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body>
+    <video id="intro-video" src="splash.mp4" autoplay muted playsinline></video>
+    
+    <script>
+        const { ipcRenderer } = require('electron');
+        const video = document.getElementById('intro-video');
+        
+        video.addEventListener('ended', () => {
+            ipcRenderer.send('splash-finished');
+        });
+
+        // Fallback in case video fails to load
+        video.addEventListener('error', () => {
+            setTimeout(() => {
+                ipcRenderer.send('splash-finished');
+            }, 3000);
+        });
+    </script>
+</body>
+</html>
