@@ -15,11 +15,8 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
-    "dotenv": "^17.2.3",
-    "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",
@@ -27,7 +24,6 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "concurrently": "^10.0.5",
@@ -36,7 +32,6 @@
     "electron-builder": "^26.15.3",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
-    "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
     "wait-on": "^9.1.0"
@@ -50,8 +45,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json",
-      "gallery-template/**/*"
+      "package.json"
     ],
     "win": {
       "target": [
@@ -68,9 +62,6 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
-    },
-    "asarUnpack": [
-      "node_modules/cloudflared/**/*"
-    ]
+    }
   }
 }

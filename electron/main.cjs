@@ -3,6 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+// Tắt hardware acceleration để tránh crash GPU trên Windows (exit_code=-1073741819)
+app.disableHardwareAcceleration();
+
 let adminWindow = null;
 let customerWindow = null;
 
@@ -28,8 +31,12 @@ function getSaveDirectory() {
 // PRINTER IPCs
 // -------------------------------------------------------------
 ipcMain.handle('get-printers', async () => {
-  if (adminWindow) {
-    return await adminWindow.webContents.getPrintersAsync();
+  try {
+    if (adminWindow) {
+      return await adminWindow.webContents.getPrintersAsync();
+    }
+  } catch (err) {
+    console.warn('[CGBOOTH] Không thể lấy danh sách máy in (RPC Server Spooler chưa bật):', err.message);
   }
   return [];
 });
@@ -132,27 +139,14 @@ ipcMain.handle('select-directory', async (event) => {
 });
 
 function createWindow() {
-  // --- 1. Tạo Splash Window ---
-  const splashWindow = new BrowserWindow({
-    width: 800, height: 600,
-    transparent: true,
-    frame: false,
-    alwaysOnTop: true,
-    resizable: false,
-    center: true,
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
-    }
-  });
-  
-  splashWindow.loadFile(path.join(__dirname, 'splash.html'));
+  const splashVideoPath = path.join(__dirname, 'splash.mp4');
+  const hasSplash = fs.existsSync(splashVideoPath);
 
-  // --- 2. Tạo Admin Window (Ẩn) ---
+  // --- 1. Tạo Admin Window ---
   adminWindow = new BrowserWindow({
     width: 1200, height: 800,
     title: 'CGBOOTH - Admin',
-    show: false, // Ẩn lúc khởi động
+    show: !hasSplash, // Nếu không có splash thì hiện cửa sổ Admin ngay lập tức!
     webPreferences: { 
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false, 
@@ -161,22 +155,53 @@ function createWindow() {
     }
   });
 
-  // --- 3. Lắng nghe Splash kết thúc ---
-  ipcMain.once('splash-finished', () => {
-    if (splashWindow && !splashWindow.isDestroyed()) {
-      splashWindow.close();
-    }
-    if (adminWindow && !adminWindow.isDestroyed()) {
+  adminWindow.setMenuBarVisibility(false);
+  adminWindow.loadFile(path.join(__dirname, '../dist/index.html'), { search: '?mode=admin' });
+  
+  if (!hasSplash) {
+    adminWindow.once('ready-to-show', () => {
       adminWindow.show();
       adminWindow.focus();
-    }
-  });
-  adminWindow.setMenuBarVisibility(false);
-  adminWindow.loadFile(path.join(__dirname, '../dist/index.html'), { search: 'mode=admin' });
+    });
+  }
+
   adminWindow.on('closed', () => { 
     adminWindow = null;
     app.quit(); 
   });
+
+  // --- 2. Nếu có file splash.mp4 thì mới hiển thị Splash ---
+  if (hasSplash) {
+    const splashWindow = new BrowserWindow({
+      width: 800, height: 600,
+      transparent: true,
+      frame: false,
+      alwaysOnTop: true,
+      resizable: false,
+      center: true,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+      }
+    });
+    
+    splashWindow.loadFile(path.join(__dirname, 'splash.html'));
+
+    const finishSplash = () => {
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.close();
+      }
+      if (adminWindow && !adminWindow.isDestroyed()) {
+        adminWindow.show();
+        adminWindow.focus();
+      }
+    };
+
+    ipcMain.once('splash-finished', finishSplash);
+
+    // Timeout an toàn 4 giây: nếu splash bị treo/lỗi thì vẫn tự động mở Admin
+    setTimeout(finishSplash, 4000);
+  }
 }
 
 // Fix #9: Đổi ipcMain.on → ipcMain.handle để renderer có thể nhận lỗi
@@ -204,7 +229,7 @@ ipcMain.handle('open-customer-screen', async () => {
     });
 
     customerWindow.setMenuBarVisibility(false);
-    customerWindow.loadFile(path.join(__dirname, '../dist/index.html'), { search: 'mode=camera' });
+    customerWindow.loadFile(path.join(__dirname, '../dist/index.html'), { search: '?mode=camera' });
     customerWindow.webContents.on('did-finish-load', () => {
       customerWindow.show();
       customerWindow.focus();

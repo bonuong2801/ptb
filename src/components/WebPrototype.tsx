@@ -13,7 +13,6 @@ declare global {
       getServerUrl?: () => Promise<string>;
       getSaveDirectory?: () => Promise<string>;
       selectDirectory?: () => Promise<string | null>;
-      getTunnelUrl?: () => Promise<string | null>;
       getPrinters?: () => Promise<any[]>;
       printImage?: (data: any) => Promise<{success: boolean, error?: string}>;
       getSavedPrinter?: () => Promise<string>;
@@ -144,6 +143,7 @@ const generateFinalImage = async (config: CustomFrameConfig, capturedImages: str
             ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
             res();
           };
+          frameImg.onerror = () => { res(); };
           frameImg.src = config.frameImage!;
         });
       }
@@ -675,7 +675,7 @@ function ControlScreen() {
     }
     setupPreview();
     return () => { if (currentStream) currentStream.getTracks().forEach(t => t.stop()); };
-  }, [selectedDeviceId]);
+  }, [selectedDeviceId, cameraReady]);
 
   useEffect(() => {
     const bc = new SyncService(CHANNEL_NAME);
@@ -767,7 +767,7 @@ function ControlScreen() {
       const timeout = setTimeout(broadcastAssets, 50); // Small debounce for rapid slot dragging
       return () => clearTimeout(timeout);
     }
-  }, [customConfig, capturedImages, channel, syncRequest]);
+  }, [customConfig, channel, syncRequest]);
 
   // Gửi lựa chọn camera sang Customer Screen — Customer mới là nơi sở hữu
   // camera thật, nên chỉ cần gửi đúng deviceId, không cần gửi lại các state
@@ -1340,10 +1340,11 @@ function CameraScreen() {
           setIsProcessing(true);
           broadcastState({ isProcessing: true });
           
-          // Không cần chờ 3 giây ảo nữa, cập nhật state luôn để bắt đầu render frame
-          setIsProcessing(false);
-          setIsSessionActive(false);
-          broadcastState({ isProcessing: false, isSessionActive: false });
+          setTimeout(() => {
+            setIsProcessing(false);
+            setIsSessionActive(false);
+            broadcastState({ isProcessing: false, isSessionActive: false });
+          }, 800);
         }
       }
     }
