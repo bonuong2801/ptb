@@ -280,10 +280,10 @@ export function ControlScreen() {
         }
       };
       
-      const timeout = setTimeout(broadcastAssets, 50); // Small debounce for rapid slot dragging
+      const timeout = setTimeout(broadcastAssets, isEditorOpen ? 250 : 80); // Debounce during rapid slot dragging
       return () => clearTimeout(timeout);
     }
-  }, [customConfig, channel, syncRequest]);
+  }, [customConfig, channel, syncRequest, isEditorOpen]);
 
   // Gửi lựa chọn camera sang Customer Screen — Customer mới là nơi sở hữu
   // camera thật, nên chỉ cần gửi đúng deviceId, không cần gửi lại các state
