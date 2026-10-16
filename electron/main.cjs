@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, dialog, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -97,13 +97,6 @@ ipcMain.handle('print-image', async (event, { imageBase64, copies, printerName }
 app.whenReady().then(async () => {
   const currentDir = getSaveDirectory();
   if (!fs.existsSync(currentDir)) fs.mkdirSync(currentDir, { recursive: true });
-
-  // Fix #2: Đăng ký custom protocol để serve file local thay vì webSecurity: false
-  protocol.registerFileProtocol('cgbooth', (request, callback) => {
-    const url = request.url.replace('cgbooth://', '');
-    const filePath = path.normalize(decodeURIComponent(url));
-    callback({ path: filePath });
-  });
 
   createWindow();
 });
@@ -247,30 +240,34 @@ ipcMain.on('broadcast-sync', (event, data) => {
   if (customerWindow && event.sender !== customerWindow.webContents) customerWindow.webContents.send('sync-received', data);
 });
 
-ipcMain.handle('save-session', async (event, { sessionName, finalImage, rawImages, videoBase64 }) => {
+ipcMain.handle('save-session', async (event, { sessionName, finalImage, rawImages, videoBase64, videoBuffer }) => {
   try {
-    const safeSessionName = sessionName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeSessionName = (sessionName || `Session_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_');
     const targetDir = path.join(getSaveDirectory(), safeSessionName);
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
+    await fs.promises.mkdir(targetDir, { recursive: true });
     
+    const writeTasks = [];
+
     if (finalImage) {
       const base64Final = finalImage.split(';base64,').pop();
-      fs.writeFileSync(path.join(targetDir, 'final_strip.jpg'), base64Final, { encoding: 'base64' });
+      writeTasks.push(fs.promises.writeFile(path.join(targetDir, 'final_strip.jpg'), Buffer.from(base64Final, 'base64')));
     }
     if (rawImages && Array.isArray(rawImages)) {
       rawImages.forEach((img, index) => {
         if (img) {
           const base64Raw = img.split(';base64,').pop();
-          fs.writeFileSync(path.join(targetDir, `raw_photo_${index + 1}.jpg`), base64Raw, { encoding: 'base64' });
+          writeTasks.push(fs.promises.writeFile(path.join(targetDir, `raw_photo_${index + 1}.jpg`), Buffer.from(base64Raw, 'base64')));
         }
       });
     }
-    if (videoBase64) {
+    if (videoBuffer) {
+      writeTasks.push(fs.promises.writeFile(path.join(targetDir, 'bts_video.webm'), Buffer.from(videoBuffer)));
+    } else if (videoBase64) {
       const base64Video = videoBase64.split(';base64,').pop();
-      fs.writeFileSync(path.join(targetDir, 'bts_video.webm'), base64Video, { encoding: 'base64' });
+      writeTasks.push(fs.promises.writeFile(path.join(targetDir, 'bts_video.webm'), Buffer.from(base64Video, 'base64')));
     }
+
+    await Promise.all(writeTasks);
 
     return { 
         success: true, 
