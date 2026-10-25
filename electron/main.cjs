@@ -6,6 +6,9 @@ const os = require('os');
 // Tắt hardware acceleration để tránh crash GPU trên Windows (exit_code=-1073741819)
 app.disableHardwareAcceleration();
 
+// Hỗ trợ nhận diện toàn diện các virtual webcam (DirectShow & Media Foundation như DroidCam, OBS Virtual Camera)
+app.commandLine.appendSwitch('enable-features', 'MediaFoundationVideoCapture');
+
 let adminWindow = null;
 let customerWindow = null;
 

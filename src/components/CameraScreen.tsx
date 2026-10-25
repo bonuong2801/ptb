@@ -29,7 +29,7 @@ export function CameraScreen() {
   const [flash, setFlash] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [finalImage, setFinalImage] = useState<string | null>(null);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(() => localStorage.getItem('selected_camera_id') || '');
   const [isMirrored, setIsMirrored] = useState(true);
   const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasSavedCameraSessionRef = useRef(false);
@@ -348,6 +348,22 @@ export function CameraScreen() {
           retryCount++;
           setTimeout(setupCamera, 600);
           return;
+        }
+        // Fallback: nếu exact deviceId lỗi (ví dụ camera DroidCam vừa đổi id khi reconnect), thử fallback sang default video
+        if (!isCancelled && selectedDeviceId && retryCount < 4) {
+          retryCount++;
+          try {
+            const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+            if (isCancelled) {
+              fallbackStream.getTracks().forEach(t => t.stop());
+              return;
+            }
+            currentStream = fallbackStream;
+            setStream(fallbackStream);
+            setCameraError(null);
+            if (videoRef.current) videoRef.current.srcObject = fallbackStream;
+            return;
+          } catch (_) {}
         }
         if (!isCancelled) {
           setCameraError("UI SIMULATION MODE ACTIVE (NO CAMERA)");

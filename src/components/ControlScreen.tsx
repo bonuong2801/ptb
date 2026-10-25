@@ -19,7 +19,8 @@ export function ControlScreen() {
   const [sessionDlUrl, setSessionDlUrl] = useState<string>('');
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(() => localStorage.getItem('selected_camera_id') || '');
+  const [isScanningCameras, setIsScanningCameras] = useState(false);
   
   const [isMirrored, setIsMirrored] = useState(true);
   
@@ -145,19 +146,72 @@ export function ControlScreen() {
   const stateRef = useRef({ customConfig, capturedImages });
   useEffect(() => { stateRef.current = { customConfig, capturedImages }; }, [customConfig, capturedImages]);
 
-  // Enumerate Devices
-  const fetchCameras = () => {
-    navigator.mediaDevices.getUserMedia({ video: true }).then((s) => {
-      s.getTracks().forEach(t => t.stop());
-      navigator.mediaDevices.enumerateDevices().then(devs => {
-         const videoDevs = devs.filter(d => d.kind === 'videoinput');
-         setDevices(videoDevs);
-         setSelectedDeviceId(prev => {
-            if (!prev && videoDevs.length > 0) return videoDevs[0].deviceId;
-            return prev;
-         });
+  const handleSelectDevice = (id: string) => {
+    setSelectedDeviceId(id);
+    localStorage.setItem('selected_camera_id', id);
+    const found = devices.find(d => d.deviceId === id);
+    if (found && found.label) {
+      localStorage.setItem('selected_camera_label', found.label);
+    }
+  };
+
+  // Enumerate Devices with permission probe and robust device persistence
+  const fetchCameras = async () => {
+    setIsScanningCameras(true);
+    try {
+      // 1. Thử probe xin quyền nhẹ để lấy đầy đủ device label (tên camera)
+      try {
+        const probeStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        probeStream.getTracks().forEach(t => t.stop());
+      } catch (probeErr) {
+        console.warn("Camera probe warning (camera might be busy or in use):", probeErr);
+      }
+
+      // 2. Luôn enumerateDevices() để lấy toàn bộ danh sách camera (kể cả khi probe lỗi)
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      const videoDevs = devs.filter(d => d.kind === 'videoinput');
+      setDevices(videoDevs);
+
+      // 3. Tự động chọn camera:
+      const savedId = localStorage.getItem('selected_camera_id');
+      const savedLabel = localStorage.getItem('selected_camera_label');
+
+      setSelectedDeviceId(prev => {
+        // Nếu đang chọn 1 ID hợp lệ trong danh sách mới
+        if (prev && videoDevs.some(d => d.deviceId === prev)) return prev;
+
+        // Nếu có camera đã lưu theo ID
+        if (savedId && videoDevs.some(d => d.deviceId === savedId)) return savedId;
+
+        // Nếu có camera khớp với tên đã lưu (VD: "DroidCam" hoặc "OBS")
+        if (savedLabel) {
+          const match = videoDevs.find(d => d.label && d.label.toLowerCase().includes(savedLabel.toLowerCase()));
+          if (match) {
+            localStorage.setItem('selected_camera_id', match.deviceId);
+            return match.deviceId;
+          }
+        }
+
+        // Tự động ưu tiên camera ngoài nếu phát hiện (DroidCam / OBS / USB Webcam)
+        const externalCam = videoDevs.find(d => 
+          d.label && /droid|obs|usb|external|webcam|c920|brio/i.test(d.label)
+        );
+        if (externalCam) {
+          localStorage.setItem('selected_camera_id', externalCam.deviceId);
+          localStorage.setItem('selected_camera_label', externalCam.label);
+          return externalCam.deviceId;
+        }
+
+        // Mặc định chọn camera đầu tiên
+        const firstId = videoDevs.length > 0 ? videoDevs[0].deviceId : '';
+        if (firstId) localStorage.setItem('selected_camera_id', firstId);
+        return firstId;
       });
-    }).catch(console.warn);
+    } catch (err) {
+      console.error("Lỗi khi quét danh sách camera:", err);
+    } finally {
+      setTimeout(() => setIsScanningCameras(false), 500);
+    }
   };
 
   useEffect(() => {
@@ -611,19 +665,31 @@ export function ControlScreen() {
              <div className="absolute top-3 right-3 liquid-glass-pill px-3 py-1.5 flex items-center gap-2.5 z-30 border border-white/15 shadow-[0_4px_20px_rgba(0,0,0,0.5)]">
                <button 
                  onClick={fetchCameras} 
-                 className="text-white/60 hover:text-cyan-400 p-1 rounded-full transition-colors cursor-pointer"
-                 title="Làm mới danh sách Camera"
+                 disabled={isScanningCameras}
+                 className={`text-white/70 hover:text-cyan-400 p-1 rounded-full transition-all cursor-pointer ${isScanningCameras ? 'animate-spin text-cyan-400' : ''}`}
+                 title="Làm mới / Quét tìm Camera (DroidCam, OBS, USB...)"
                >
                  <RefreshCw className="w-3.5 h-3.5" />
                </button>
-               <select 
-                 className="bg-transparent text-white/90 rounded outline-none font-mono text-[10px] max-w-[150px] overflow-hidden text-ellipsis cursor-pointer"
-                 value={selectedDeviceId}
-                 onChange={e => setSelectedDeviceId(e.target.value)}
-               >
-                 <option value="" className="bg-[#080a12] text-white">Default Camera</option>
-                 {devices.map(d => <option key={d.deviceId} value={d.deviceId} className="bg-[#080a12] text-white">{d.label || 'Camera'}</option>)}
-               </select>
+               <div className="flex items-center gap-1.5">
+                 <select 
+                   className="bg-transparent text-white/90 rounded outline-none font-mono text-[11px] max-w-[220px] overflow-hidden text-ellipsis cursor-pointer font-bold"
+                   value={selectedDeviceId}
+                   onChange={e => handleSelectDevice(e.target.value)}
+                 >
+                   <option value="" className="bg-[#080a12] text-white">Default Camera</option>
+                   {devices.map(d => (
+                     <option key={d.deviceId} value={d.deviceId} className="bg-[#080a12] text-white">
+                       {d.label || `Camera (${d.deviceId.slice(0, 8)}...)`}
+                     </option>
+                   ))}
+                 </select>
+                 {devices.length > 0 && (
+                   <span className="text-[9px] font-mono font-bold bg-white/10 text-cyan-300 px-1.5 py-0.5 rounded-md border border-white/10 shrink-0">
+                     {devices.length} cam
+                   </span>
+                 )}
+               </div>
                <div className="w-px h-3 bg-white/20" />
                <button
                  type="button"
