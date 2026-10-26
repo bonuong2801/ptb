@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, RefreshCw, ExternalLink, LayoutDashboard, Trash2, X } from 'lucide-react';
+import { Camera, RefreshCw, ExternalLink, LayoutDashboard, Trash2, X, Scissors, Printer, FileText } from 'lucide-react';
 import { CustomFrameConfig, CHANNEL_NAME } from '../types/booth';
 import { SyncService } from '../utils/syncService';
 import { generateFinalImage, syncDB } from '../utils/frameRenderer';
 import { VisualFrameEditor, ScalablePreview } from './VisualFrameEditor';
+import { A4PrintArrangerModal } from './A4PrintArrangerModal';
 
 export function ControlScreen() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -392,7 +393,8 @@ export function ControlScreen() {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        canvas.width = 1280; canvas.height = 720;
+        canvas.width = videoRef.current?.videoWidth || 1280;
+        canvas.height = videoRef.current?.videoHeight || 720;
         if (video && video.srcObject && video.readyState >= 2) {
           if (isMirrored) {
             ctx.save();
@@ -453,7 +455,8 @@ export function ControlScreen() {
   };
 
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
-  const [printCopies, setPrintCopies] = useState(1);
+  const [isA4ArrangerOpen, setIsA4ArrangerOpen] = useState(false);
+  const [printCopies, setPrintCopies] = useState(2);
   const hasShownPrintModalRef = useRef(false);
 
   // Tự động mở cửa sổ in ảnh khi đã có ảnh hoàn chỉnh (chỉ mở 1 lần mỗi phiên chụp)
@@ -461,7 +464,7 @@ export function ControlScreen() {
     if (capturedImages.length === customConfig.totalShots && !isSessionActive && !isProcessing && finalImage && !hasShownPrintModalRef.current) {
       hasShownPrintModalRef.current = true;
       setIsPrintModalOpen(true);
-      setPrintCopies(1); // Reset số lượng in về 1
+      setPrintCopies(2); // Mặc định 2 bản in (cặp đôi)
     } else if (capturedImages.length === 0) {
       hasShownPrintModalRef.current = false;
     }
@@ -472,11 +475,25 @@ export function ControlScreen() {
       alert("Vui lòng chọn máy in ở cột bên trái!");
       return;
     }
-    console.log("Đang in...");
+    console.log("Đang in khổ gốc...");
     setIsPrintModalOpen(false);
     if (window.electronAPI?.printImage) {
-      const result = await window.electronAPI.printImage({ imageBase64: finalImage, copies: printCopies, printerName: selectedPrinter });
+      const result = await window.electronAPI.printImage({ imageBase64: finalImage!, copies: printCopies, printerName: selectedPrinter });
       if (!result.success) alert("Lỗi khi in: " + result.error);
+    }
+  };
+
+  const handleA4Print = async (a4Base64: string) => {
+    if (!selectedPrinter) {
+      alert("Vui lòng chọn máy in ở cột bên trái!");
+      return;
+    }
+    console.log("Đang in khổ A4...");
+    if (window.electronAPI?.printImage) {
+      const result = await window.electronAPI.printImage({ imageBase64: a4Base64, copies: 1, printerName: selectedPrinter });
+      if (!result.success) {
+        alert("Lỗi khi in A4: " + result.error);
+      }
     }
   };
 
@@ -709,7 +726,7 @@ export function ControlScreen() {
              {cameraReady ? (
                /* Screen 2 kết nối → hiện live frame từ Screen 2 */
                liveFrame ? (
-                 <img src={liveFrame} className="w-full h-full object-cover opacity-80" alt="Live View" />
+                 <img src={liveFrame} className="w-full h-full object-contain bg-black opacity-90" alt="Live View" />
                ) : (
                  <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-white/40 text-xs uppercase tracking-widest font-mono">
                    [Waiting for Customer Camera...]
@@ -721,7 +738,7 @@ export function ControlScreen() {
                  <video
                    ref={videoRef}
                    autoPlay playsInline muted
-                   className={`w-full h-full object-cover transition-transform duration-300 ${isMirrored ? '-scale-x-100' : ''}`}
+                   className={`w-full h-full object-contain bg-black transition-transform duration-300 ${isMirrored ? '-scale-x-100' : ''}`}
                  />
                  <canvas ref={canvasRef} className="hidden" />
                  {!previewStream && (
@@ -748,14 +765,25 @@ export function ControlScreen() {
                     <div className="flex flex-col justify-center">
                       <h2 className="text-cyan-400 font-bold mb-1 uppercase tracking-widest text-lg">Session Complete</h2>
                       <p className="text-white/60 text-sm mb-2">Đã tự động hiển thị bảng in ảnh.</p>
-                      {finalImage && window.electronAPI ? (
-                        <p className="text-cyan-300 text-sm font-bold flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee]"></span>
-                          Đã lưu ảnh vào ổ cứng
-                        </p>
-                      ) : (
-                        <a href={finalImage || '#'} download="neobooth-strip.png" className="text-white text-sm underline underline-offset-2 hover:text-cyan-300">Tải về thủ công</a>
-                      )}
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {finalImage && window.electronAPI ? (
+                          <p className="text-cyan-300 text-sm font-bold flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee]"></span>
+                            Đã lưu ảnh vào ổ cứng
+                          </p>
+                        ) : (
+                          <a href={finalImage || '#'} download="neobooth-strip.png" className="text-white text-sm underline underline-offset-2 hover:text-cyan-300">Tải về thủ công</a>
+                        )}
+                        {finalImage && (
+                          <button
+                            onClick={() => setIsA4ArrangerOpen(true)}
+                            className="px-3 py-1 rounded-xl liquid-glass-pill hover:border-cyan-400 text-cyan-300 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <Scissors className="w-3.5 h-3.5" />
+                            <span>Sắp xếp in A4</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -772,16 +800,20 @@ export function ControlScreen() {
              </div>
             
              <div className="flex-1 flex flex-col justify-end">
-                {(capturedImages.length === 0 || isSessionActive) && (
+                {/* Nút CHỤP: hiện khi chưa có ảnh, đang chụp, hoặc đang processing (chờ render) */}
+                {(capturedImages.length === 0 || isSessionActive || isProcessing) && (
                    <button
                     onClick={startSession}
-                    disabled={isSessionActive}
-                    className={`liquid-btn-cyber w-full flex items-center justify-center gap-3 text-base py-5 transition-all h-full shadow-[0_0_35px_rgba(6,182,212,0.35)]`}
+                    disabled={isSessionActive || isProcessing}
+                    className={`liquid-btn-cyber w-full flex items-center justify-center gap-3 text-base py-5 transition-all h-full shadow-[0_0_35px_rgba(6,182,212,0.35)] ${
+                      isProcessing ? 'opacity-60 cursor-wait' : ''
+                    }`}
                    >
-                    <Camera className="w-5 h-5 text-cyan-200" />
-                    BẮT ĐẦU CHỤP ({customConfig.totalShots} ẢNH)
+                    <Camera className={`w-5 h-5 text-cyan-200 ${isProcessing ? 'animate-pulse' : ''}`} />
+                    {isProcessing ? 'ĐANG XỬ LÝ...' : `BẮT ĐẦU CHỤP (${customConfig.totalShots} ẢNH)`}
                    </button>
                 )}
+                {/* Nút RESET: hiện khi chụp xong và không còn đang xử lý */}
                 {capturedImages.length === customConfig.totalShots && !isSessionActive && !isProcessing && (
                    <button
                     onClick={resetSession}
@@ -820,41 +852,95 @@ export function ControlScreen() {
         </div>
       )}
 
-      {/* Print Modal Overlay */}
+      {/* Bước 1: Modal Chọn Số Lượng Bản In */}
       {isPrintModalOpen && finalImage && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-zoom-in">
-          <div animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="liquid-glass border border-white/20 p-8 rounded-3xl w-full max-w-md flex flex-col gap-6 shadow-[0_25px_60px_rgba(0,0,0,0.7)] items-center">
-              <h2 className="text-2xl font-black text-cyan-400 uppercase tracking-widest text-center">IN ẢNH</h2>
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-zoom-in">
+          <div className="liquid-glass border border-white/20 p-7 rounded-3xl w-full max-w-lg flex flex-col gap-5 shadow-[0_25px_60px_rgba(0,0,0,0.8)] items-center">
+              <div className="text-center">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-cyan-300 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-400/20">
+                  Bước 1/2: Chọn số lượng bản in
+                </span>
+                <h2 className="text-2xl font-black text-white uppercase tracking-wider mt-2">CẤU HÌNH IN ẢNH</h2>
+              </div>
               
               <div className="w-full bg-black/40 rounded-2xl p-4 flex justify-center border border-white/10 shadow-inner">
-                <img src={finalImage} alt="Preview" className="max-h-[30vh] object-contain rounded-lg drop-shadow-2xl" />
+                <img src={finalImage} alt="Preview" className="max-h-[26vh] object-contain rounded-lg drop-shadow-2xl" />
               </div>
 
-              <div className="flex flex-col gap-2 w-full text-center mt-2">
-                <p className="text-xs text-white/70 uppercase tracking-widest font-mono">SỐ LƯỢNG BẢN IN</p>
-                <div className="flex items-center justify-center gap-6 mt-2">
+              {/* Bộ chọn số lượng in */}
+              <div className="flex flex-col gap-2 w-full text-center">
+                <p className="text-xs text-white/70 uppercase tracking-widest font-mono">SỐ LƯỢNG BẢN IN DẢI ẢNH</p>
+                <div className="flex items-center justify-center gap-6 mt-1">
                   <button onClick={() => setPrintCopies(Math.max(1, printCopies - 1))} className="liquid-glass-pill text-cyan-300 hover:text-white w-12 h-12 flex items-center justify-center text-2xl transition-all cursor-pointer active:scale-90 border border-cyan-400/30">-</button>
                   <span className="text-5xl font-black text-white w-16 text-center text-glow-cyan">{printCopies}</span>
                   <button onClick={() => setPrintCopies(printCopies + 1)} className="liquid-glass-pill text-cyan-300 hover:text-white w-12 h-12 flex items-center justify-center text-2xl transition-all cursor-pointer active:scale-90 border border-cyan-400/30">+</button>
                 </div>
+
+                {/* Phím tắt số lượng nhanh */}
+                <div className="flex items-center justify-center gap-2 mt-1">
+                  {[1, 2, 4, 5].map((num) => (
+                    <button
+                      key={num}
+                      onClick={() => setPrintCopies(num)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        printCopies === num 
+                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/40' 
+                          : 'liquid-glass-pill text-white/60 hover:text-white'
+                      }`}
+                    >
+                      {num} Bản
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              <div className="flex gap-4 w-full mt-4">
+              {/* Các nút hành động */}
+              <div className="flex flex-col gap-2.5 w-full mt-2">
+                {/* Nút chính: Chuyển sang Bước 2 Dàn trang A4 */}
                 <button 
-                  onClick={() => setIsPrintModalOpen(false)} 
-                  className="flex-1 liquid-glass-pill text-white/70 hover:text-white py-4 rounded-2xl font-bold tracking-wider transition-all uppercase text-sm cursor-pointer"
+                  onClick={() => {
+                    setIsPrintModalOpen(false);
+                    setIsA4ArrangerOpen(true);
+                  }}
+                  className="w-full liquid-btn-cyber py-4 rounded-2xl font-black tracking-wider transition-all uppercase text-sm sm:text-base cursor-pointer shadow-[0_0_25px_rgba(6,182,212,0.4)] flex items-center justify-center gap-2"
                 >
-                  Bỏ qua
+                  <Scissors className="w-5 h-5" />
+                  <span>SẮP XẾP TRÊN GIẤY A4 ĐỂ IN</span>
                 </button>
-                <button 
-                  onClick={handlePrint} 
-                  className="flex-[2] liquid-btn-cyber py-4 rounded-2xl font-bold tracking-wider transition-all uppercase text-base cursor-pointer shadow-[0_0_25px_rgba(6,182,212,0.35)]"
-                >
-                  XÁC NHẬN IN
-                </button>
+
+                {/* Các tùy chọn phụ */}
+                <div className="flex gap-2.5 w-full">
+                  <button 
+                    onClick={() => setIsPrintModalOpen(false)} 
+                    className="flex-1 liquid-glass-pill text-white/70 hover:text-white py-3 rounded-xl font-bold tracking-wider transition-all uppercase text-xs cursor-pointer"
+                  >
+                    Bỏ qua
+                  </button>
+                  
+                  <button 
+                    onClick={handlePrint} 
+                    className="flex-1 liquid-glass-pill text-cyan-300 hover:text-white hover:border-cyan-400/40 py-3 rounded-xl font-bold tracking-wider transition-all uppercase text-xs cursor-pointer flex items-center justify-center gap-1.5"
+                    title="In trực tiếp nếu dùng máy in nhiệt chuyên dụng 5x15cm"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>In Khổ Gốc (5x15)</span>
+                  </button>
+                </div>
               </div>
             </div>
         </div>
+      )}
+
+      {/* Bước 2: Modal Dàn trang & Kéo thả các dải ảnh trên khổ giấy A4 */}
+      {finalImage && (
+        <A4PrintArrangerModal
+          isOpen={isA4ArrangerOpen}
+          onClose={() => setIsA4ArrangerOpen(false)}
+          finalImage={finalImage}
+          initialCopies={printCopies}
+          selectedPrinter={selectedPrinter}
+          onConfirmPrint={handleA4Print}
+        />
       )}
     </div>
   );

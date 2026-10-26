@@ -101,7 +101,8 @@ export function CameraScreen() {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        canvas.width = 1280; canvas.height = 720;
+        canvas.width = (video?.videoWidth) || 1280;
+        canvas.height = (video?.videoHeight) || 720;
         
         if (video && video.srcObject && video.readyState >= 2) {
             if (isMirrored) {
@@ -213,8 +214,10 @@ export function CameraScreen() {
       const video = videoRef.current;
       const canvas = liveCanvasRef.current;
       if (canvas) {
-         canvas.width = 854;
-         canvas.height = 480;
+         const vw = (video && video.videoWidth > 0) ? video.videoWidth : 854;
+         const vh = (video && video.videoHeight > 0) ? video.videoHeight : 480;
+         canvas.width = vw;
+         canvas.height = vh;
          const ctx = canvas.getContext('2d');
          if (ctx) {
             if (video && video.readyState === 4) {
@@ -387,7 +390,7 @@ export function CameraScreen() {
 
         {capturedImages.length < customConfig.totalShots ? (
           <>
-            <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover transition-transform duration-300 ${isMirrored ? '-scale-x-100' : ''}`} />
+            <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-contain bg-black transition-transform duration-300 ${isMirrored ? '-scale-x-100' : ''}`} />
             <canvas ref={canvasRef} className="hidden" />
             <canvas ref={liveCanvasRef} className="hidden" />
             
