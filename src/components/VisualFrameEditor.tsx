@@ -322,6 +322,9 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
                         setActiveSlotIdx(idx);
                         if (!containerRef.current) return;
                         const rect = containerRef.current.getBoundingClientRect();
+                        // Không kích hoạt drag nếu click vào button con (Xóa / Đổi Tròn)
+                        const tgt = e.target as HTMLElement;
+                        if (tgt.closest && tgt.closest('button')) return;
                         try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
                         dragRef.current = {
                           idx,
@@ -395,12 +398,23 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
                           </div>
 
                           {/* Action Bar (ở mép dưới cùng để không che nút xoay) */}
-                          <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/95 backdrop-blur-md rounded-full px-2.5 py-1 z-50 whitespace-nowrap border border-white/20 shadow-xl">
-                             <button onClick={(e) => { e.stopPropagation(); toggleShape(idx); }} className="px-2 py-0.5 text-[10px] text-white hover:text-cyan-400 rounded-full transition-colors font-medium">
+                          <div
+                            className="absolute -bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/95 backdrop-blur-md rounded-full px-2.5 py-1 z-50 whitespace-nowrap border border-white/20 shadow-xl"
+                            onPointerDown={(e) => e.stopPropagation()}
+                          >
+                             <button
+                               onPointerDown={(e) => e.stopPropagation()}
+                               onClick={(e) => { e.stopPropagation(); toggleShape(idx); }}
+                               className="px-2 py-0.5 text-[10px] text-white hover:text-cyan-400 rounded-full transition-colors font-medium cursor-pointer"
+                             >
                                {isCircle ? 'Đổi Vuông' : 'Đổi Tròn'}
                              </button>
                              <div className="w-[1px] h-3 bg-white/20" />
-                             <button onClick={(e) => { e.stopPropagation(); removeSlot(idx); }} className="px-2 py-0.5 text-[10px] text-red-400 hover:text-red-300 rounded-full transition-colors font-medium">
+                             <button
+                               onPointerDown={(e) => e.stopPropagation()}
+                               onClick={(e) => { e.stopPropagation(); removeSlot(idx); }}
+                               className="px-2 py-0.5 text-[10px] text-red-400 hover:text-red-300 rounded-full transition-colors font-medium cursor-pointer"
+                             >
                                Xóa
                              </button>
                           </div>

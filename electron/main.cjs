@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -6,8 +6,9 @@ const os = require('os');
 // Tắt hardware acceleration để tránh crash GPU trên Windows (exit_code=-1073741819)
 app.disableHardwareAcceleration();
 
-// Hỗ trợ nhận diện toàn diện các virtual webcam (DirectShow & Media Foundation như DroidCam, OBS Virtual Camera)
-app.commandLine.appendSwitch('enable-features', 'MediaFoundationVideoCapture');
+// Tắt Media Foundation để Chromium dùng DirectShow backend — bắt buộc đối với OBS Virtual Camera, EOS Utility & DroidCam
+app.commandLine.appendSwitch('disable-features', 'MediaFoundationVideoCapture');
+app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
 
 let adminWindow = null;
 let customerWindow = null;
@@ -98,6 +99,24 @@ ipcMain.handle('print-image', async (event, { imageBase64, copies, printerName }
 
 // Serve tĩnh toàn bộ thư mục CGBOOTH
 app.whenReady().then(async () => {
+  // Tự động cấp quyền truy cập Camera / Microphone cho các cửa sổ
+  if (session && session.defaultSession) {
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+      if (['media', 'camera', 'microphone'].includes(permission)) {
+        callback(true);
+      } else {
+        callback(false);
+      }
+    });
+
+    session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+      if (['media', 'camera', 'microphone'].includes(permission)) {
+        return true;
+      }
+      return false;
+    });
+  }
+
   const currentDir = getSaveDirectory();
   if (!fs.existsSync(currentDir)) fs.mkdirSync(currentDir, { recursive: true });
 

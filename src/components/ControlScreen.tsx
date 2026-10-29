@@ -34,6 +34,8 @@ export function ControlScreen() {
     photoShapes: ['rectangle', 'rectangle', 'rectangle', 'rectangle'], layoutMode: 'freeform', photoLayouts: [{x: 10, y: 5, width: 80, height: 20}, {x: 10, y: 28, width: 80, height: 20}, {x: 10, y: 51, width: 80, height: 20}, {x: 10, y: 74, width: 80, height: 20}]
   }]);
 
+  const isDbLoadedRef = useRef(false);
+
   // Tải danh sách Khung từ IndexedDB (syncDB), tránh lỗi QuotaExceededError của localStorage
   useEffect(() => {
     syncDB.get('saved_frames').then((frames) => {
@@ -54,10 +56,16 @@ export function ControlScreen() {
           } catch(e) {}
         }
       }
+      isDbLoadedRef.current = true;
+    }).catch(err => {
+      console.error("Lỗi khi đọc saved_frames từ IndexedDB:", err);
+      isDbLoadedRef.current = true;
     });
   }, []);
 
   useEffect(() => {
+    // Chặn lưu trước khi quá trình nạp ban đầu từ DB hoàn tất (tránh race condition đè mất frames)
+    if (!isDbLoadedRef.current) return;
     if (savedFrames && savedFrames.length > 0) {
       syncDB.set('saved_frames', savedFrames);
     }
@@ -171,6 +179,7 @@ export function ControlScreen() {
       // 2. Luôn enumerateDevices() để lấy toàn bộ danh sách camera (kể cả khi probe lỗi)
       const devs = await navigator.mediaDevices.enumerateDevices();
       const videoDevs = devs.filter(d => d.kind === 'videoinput');
+      console.log("[CG] Danh sách camera phát hiện được:", videoDevs.map(d => ({ label: d.label, id: d.deviceId })));
       setDevices(videoDevs);
 
       // 3. Tự động chọn camera:
@@ -193,9 +202,9 @@ export function ControlScreen() {
           }
         }
 
-        // Tự động ưu tiên camera ngoài nếu phát hiện (DroidCam / OBS / USB Webcam)
+        // Tự động ưu tiên camera ngoài nếu phát hiện (DroidCam / OBS / EOS / USB Webcam)
         const externalCam = videoDevs.find(d => 
-          d.label && /droid|obs|usb|external|webcam|c920|brio/i.test(d.label)
+          d.label && /droid|obs|eos|canon|usb|external|webcam|c920|brio/i.test(d.label)
         );
         if (externalCam) {
           localStorage.setItem('selected_camera_id', externalCam.deviceId);
@@ -840,7 +849,7 @@ export function ControlScreen() {
                    <button onClick={saveCurrentFrame} className="liquid-btn-cyber text-xs uppercase px-4 py-2 cursor-pointer">Lưu</button>
                    <button onClick={createNewFrame} className="liquid-glass-pill text-white/80 hover:text-white font-bold text-xs uppercase px-4 py-2 hover:border-cyan-400/40 transition-all cursor-pointer">Mới</button>
                    <div className="w-px h-6 bg-white/20 mx-1"></div>
-                   <button onClick={() => setIsEditorOpen(false)} className="liquid-glass-pill text-white/60 hover:text-white transition-all p-2 cursor-pointer hover:border-white/30">
+                   <button onClick={() => { saveCurrentFrame(); setIsEditorOpen(false); }} className="liquid-glass-pill text-white/60 hover:text-white transition-all p-2 cursor-pointer hover:border-white/30" title="Đóng và lưu">
                       <X className="w-4 h-4" />
                    </button>
                 </div>
