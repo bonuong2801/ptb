@@ -66,32 +66,6 @@ export function CameraScreen() {
     }
   };
 
-  const doCountdown = (shotIndex: number) => {
-    if (countdownTimerRef.current) {
-      clearInterval(countdownTimerRef.current);
-      countdownTimerRef.current = null;
-    }
-    let count = 5;
-    setCountdown(count);
-    broadcastState({ countdown: count, currentShotIndex: shotIndex, isSessionActive: true });
-    
-    countdownTimerRef.current = setInterval(() => {
-      count -= 1;
-      if (count > 0) {
-        setCountdown(count);
-        broadcastState({ countdown: count });
-      } else {
-        if (countdownTimerRef.current) {
-          clearInterval(countdownTimerRef.current);
-          countdownTimerRef.current = null;
-        }
-        setCountdown(null);
-        broadcastState({ countdown: null });
-        takePhoto(shotIndex);
-      }
-    }, 1000);
-  };
-
   const takePhoto = (shotIndex: number) => {
     setFlash(true);
     setTimeout(() => setFlash(false), 150);
@@ -129,45 +103,41 @@ export function CameraScreen() {
         const updated = [...currState.capturedImages, newImage];
           
         setCapturedImages(updated);
-        broadcastState({ capturedImages: updated });
+        setCurrentShotIndex(updated.length);
           
-        if (updated.length < currState.customConfig.totalShots) {
-          setTimeout(() => {
-            setCurrentShotIndex(updated.length);
-            doCountdown(updated.length);
-          }, 1000);
-        } else {
+        if (updated.length >= currState.customConfig.totalShots) {
           if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
             mediaRecorderRef.current.stop();
           }
           setIsProcessing(true);
-          broadcastState({ isProcessing: true });
+          broadcastState({ capturedImages: updated, currentShotIndex: updated.length, isProcessing: true });
           
           setTimeout(() => {
             setIsProcessing(false);
             setIsSessionActive(false);
-            broadcastState({ isProcessing: false, isSessionActive: false });
+            broadcastState({ capturedImages: updated, currentShotIndex: updated.length, isProcessing: false, isSessionActive: false });
           }, 800);
+        } else {
+          // CHẾ ĐỘ BẤM CHỦ ĐỘNG: Dừng lại và chờ người dùng bấm shot tiếp theo!
+          setIsSessionActive(true);
+          broadcastState({ capturedImages: updated, currentShotIndex: updated.length, isSessionActive: true, isProcessing: false, countdown: null });
         }
       }
     }
   };
 
-  const beginSession = () => {
+  const triggerShot = (delay: number = 0) => {
+    const currState = stateRef.current;
+    if (currState.capturedImages.length >= currState.customConfig.totalShots) return;
+    if (currState.isProcessing) return;
+
     if (countdownTimerRef.current) {
       clearInterval(countdownTimerRef.current);
       countdownTimerRef.current = null;
     }
-    hasSavedCameraSessionRef.current = false;
-    setCapturedImages([]);
-    setRecordedVideoBlob(null);
-    setCurrentShotIndex(0);
-    setIsSessionActive(true);
-    setIsProcessing(false);
-    broadcastState({ capturedImages: [], currentShotIndex: 0, isSessionActive: true, isProcessing: false });
-    
-    // Bắt đầu ghi video
-    if (stream) {
+
+    // Bắt đầu ghi video BTS ở shot đầu tiên nếu chưa ghi
+    if (currState.capturedImages.length === 0 && stream && (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive')) {
       try {
         mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
       } catch (e) {
@@ -183,8 +153,55 @@ export function CameraScreen() {
       };
       mediaRecorderRef.current.start(200);
     }
-    
-    doCountdown(0);
+
+    const nextIndex = currState.capturedImages.length;
+    setCurrentShotIndex(nextIndex);
+    setIsSessionActive(true);
+
+    if (delay <= 0) {
+      setCountdown(null);
+      broadcastState({ countdown: null, currentShotIndex: nextIndex, isSessionActive: true });
+      takePhoto(nextIndex);
+    } else {
+      let count = delay;
+      setCountdown(count);
+      broadcastState({ countdown: count, currentShotIndex: nextIndex, isSessionActive: true });
+      countdownTimerRef.current = setInterval(() => {
+        count -= 1;
+        if (count > 0) {
+          setCountdown(count);
+          broadcastState({ countdown: count });
+        } else {
+          if (countdownTimerRef.current) {
+            clearInterval(countdownTimerRef.current);
+            countdownTimerRef.current = null;
+          }
+          setCountdown(null);
+          broadcastState({ countdown: null });
+          takePhoto(nextIndex);
+        }
+      }, 1000);
+    }
+  };
+
+  const retakeLastShot = () => {
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    setCountdown(null);
+    const curr = stateRef.current.capturedImages;
+    if (curr.length > 0) {
+      const updated = curr.slice(0, -1);
+      setCapturedImages(updated);
+      setCurrentShotIndex(updated.length);
+      setIsProcessing(false);
+      broadcastState({ capturedImages: updated, currentShotIndex: updated.length, isSessionActive: true, isProcessing: false, countdown: null });
+    }
+  };
+
+  const beginSession = () => {
+    triggerShot(0);
   };
 
   const resetLocalSession = () => {
@@ -284,10 +301,10 @@ export function CameraScreen() {
     processAll();
   }, [finalImage, recordedVideoBlob, capturedImages, customConfig.totalShots]);
 
-  const actionsRef = useRef({ beginSession, resetLocalSession });
+  const actionsRef = useRef({ beginSession, resetLocalSession, triggerShot, retakeLastShot });
   useEffect(() => {
-    actionsRef.current = { beginSession, resetLocalSession };
-  }, [beginSession, resetLocalSession]);
+    actionsRef.current = { beginSession, resetLocalSession, triggerShot, retakeLastShot };
+  }, [beginSession, resetLocalSession, triggerShot, retakeLastShot]);
 
   useEffect(() => {
     const bc = new SyncService(CHANNEL_NAME);
@@ -316,8 +333,14 @@ export function CameraScreen() {
         });
       } else if (type === 'SET_MIRROR' && payload) {
         if (payload.isMirrored !== undefined) setIsMirrored(payload.isMirrored);
+      } else if (type === 'TRIGGER_SHOT') {
+        const delay = (payload && typeof payload.delay === 'number') ? payload.delay : 0;
+        actionsRef.current.triggerShot(delay);
+      } else if (type === 'RETAKE_LAST_SHOT') {
+        actionsRef.current.retakeLastShot();
       } else if (type === 'START_SESSION') {
-        actionsRef.current.beginSession();
+        const delay = (payload && typeof payload.delay === 'number') ? payload.delay : 0;
+        actionsRef.current.triggerShot(delay);
       } else if (type === 'RESET_SESSION') {
         actionsRef.current.resetLocalSession();
       }
@@ -390,6 +413,26 @@ export function CameraScreen() {
 
         {capturedImages.length < customConfig.totalShots ? (
           <>
+            {/* Progress indicator on Customer Screen */}
+            <div className="absolute top-6 left-6 z-30 flex items-center gap-3 liquid-glass px-5 py-2.5 rounded-full border border-white/20 shadow-lg">
+              <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
+              <span className="text-white font-mono font-bold text-sm tracking-wider uppercase">
+                ẢNH {capturedImages.length + 1} / {customConfig.totalShots}
+              </span>
+              <div className="flex gap-1.5 ml-1">
+                {Array.from({ length: customConfig.totalShots }).map((_, i) => (
+                  <div 
+                    key={i} 
+                    className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
+                      i < capturedImages.length 
+                        ? 'bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.8)]' 
+                        : 'bg-white/20'
+                    }`} 
+                  />
+                ))}
+              </div>
+            </div>
+
             <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-contain bg-black transition-transform duration-300 ${isMirrored ? '-scale-x-100' : ''}`} />
             <canvas ref={canvasRef} className="hidden" />
             <canvas ref={liveCanvasRef} className="hidden" />

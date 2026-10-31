@@ -374,27 +374,7 @@ export function ControlScreen() {
     }
   };
 
-  const doCountdownLocal = (shotIndex: number) => {
-    if (countdownTimerRef.current) {
-      clearInterval(countdownTimerRef.current);
-      countdownTimerRef.current = null;
-    }
-    let count = 5;
-    setCountdown(count);
-    countdownTimerRef.current = setInterval(() => {
-      count -= 1;
-      if (count > 0) {
-        setCountdown(count);
-      } else {
-        if (countdownTimerRef.current) {
-          clearInterval(countdownTimerRef.current);
-          countdownTimerRef.current = null;
-        }
-        setCountdown(null);
-        takePhotoLocal(shotIndex);
-      }
-    }, 1000);
-  };
+  const [shootDelay, setShootDelay] = useState<number>(0);
 
   const takePhotoLocal = (shotIndex: number) => {
     if (canvasRef.current) {
@@ -428,39 +408,76 @@ export function ControlScreen() {
         const currState = stateRef.current;
         const updated = [...currState.capturedImages, newImage];
         setCapturedImages(updated);
+        setCurrentShotIndex(updated.length);
 
-        if (updated.length < currState.customConfig.totalShots) {
-          setTimeout(() => {
-            setCurrentShotIndex(updated.length);
-            doCountdownLocal(updated.length);
-          }, 1000);
-        } else {
+        if (updated.length >= currState.customConfig.totalShots) {
           setIsProcessing(true);
           processingTimeoutRef.current = setTimeout(() => {
             processingTimeoutRef.current = null;
             setIsProcessing(false);
             setIsSessionActive(false);
-          }, 1500);
+          }, 1000);
+        } else {
+          // CHẾ ĐỘ BẤM CHỦ ĐỘNG: Dừng lại và chờ bấm shot tiếp theo!
+          setIsSessionActive(true);
         }
       }
     }
   };
 
-  const startSession = () => {
+  const handleTriggerShot = () => {
+    if (isProcessing) return;
+    if (capturedImages.length >= customConfig.totalShots) return;
+    if (countdown !== null) return;
+
+    if (cameraReady && channel) {
+      setIsSessionActive(true);
+      channel.postMessage({ type: 'TRIGGER_SHOT', payload: { delay: shootDelay } });
+    } else {
+      setIsSessionActive(true);
+      if (shootDelay <= 0) {
+        takePhotoLocal(capturedImages.length);
+      } else {
+        let count = shootDelay;
+        setCountdown(count);
+        countdownTimerRef.current = setInterval(() => {
+          count -= 1;
+          if (count > 0) {
+            setCountdown(count);
+          } else {
+            if (countdownTimerRef.current) {
+              clearInterval(countdownTimerRef.current);
+              countdownTimerRef.current = null;
+            }
+            setCountdown(null);
+            takePhotoLocal(capturedImages.length);
+          }
+        }, 1000);
+      }
+    }
+  };
+
+  const handleRetakeLastShot = () => {
     if (countdownTimerRef.current) {
       clearInterval(countdownTimerRef.current);
       countdownTimerRef.current = null;
     }
+    setCountdown(null);
+    if (cameraReady && channel) {
+      channel.postMessage({ type: 'RETAKE_LAST_SHOT' });
+    }
+    setCapturedImages(prev => {
+      const next = prev.slice(0, -1);
+      setCurrentShotIndex(next.length);
+      return next;
+    });
+    setFinalImage(null);
     hasSavedCurrentSessionRef.current = false;
     hasShownPrintModalRef.current = false;
-    if (cameraReady && channel) {
-      channel.postMessage({ type: 'START_SESSION' });
-    } else {
-      setIsSessionActive(true);
-      setCapturedImages([]);
-      setCurrentShotIndex(0);
-      doCountdownLocal(0);
-    }
+  };
+
+  const startSession = () => {
+    handleTriggerShot();
   };
 
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -556,11 +573,33 @@ export function ControlScreen() {
       clearTimeout(processingTimeoutRef.current);
       processingTimeoutRef.current = null;
     }
+    setFinalImage(null);
     setCapturedImages([]);
     setCurrentShotIndex(0);
     setIsSessionActive(false);
     setIsProcessing(false);
   };
+
+  // Phím tắt toàn cục: Space / Enter để kích hoạt chụp chủ động (Remote/Bàn đạp/Bàn phím)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      if (isEditorOpen || isA4ArrangerOpen || isPrintModalOpen) return;
+
+      if (e.code === 'Space' || e.code === 'Enter') {
+        e.preventDefault();
+        if (capturedImages.length < customConfig.totalShots && !isProcessing && countdown === null) {
+          handleTriggerShot();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [capturedImages.length, customConfig.totalShots, isProcessing, countdown, isEditorOpen, isA4ArrangerOpen, isPrintModalOpen, cameraReady, channel, shootDelay]);
 
   return (
     <div className="flex-1 w-full p-6 max-w-[1440px] mx-auto h-full overflow-y-auto custom-scrollbar">
@@ -726,6 +765,15 @@ export function ControlScreen() {
                  {isMirrored ? 'GƯƠNG: BẬT' : 'GƯƠNG: TẮT'}
                </button>
                <div className="w-px h-3 bg-white/20" />
+               <button
+                 type="button"
+                 onClick={() => setShootDelay(prev => prev === 0 ? 3 : 0)}
+                 className={`px-2 py-0.5 rounded-full text-[9px] font-mono border transition-all cursor-pointer ${shootDelay > 0 ? 'bg-amber-500/20 text-amber-300 border-amber-400/40 font-bold' : 'bg-cyan-500/20 text-cyan-300 border-cyan-400/40 font-bold'}`}
+                 title="Chế độ chụp: Chụp tức thì hoặc đếm lùi 3 giây"
+               >
+                 {shootDelay > 0 ? 'HẸN GIỜ: 3S' : 'CHỤP: TỨC THÌ'}
+               </button>
+               <div className="w-px h-3 bg-white/20" />
                <span className="text-[10px] font-mono uppercase tracking-widest text-cyan-400 flex items-center gap-1.5 font-bold">
                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
                  LIVE
@@ -808,29 +856,103 @@ export function ControlScreen() {
                 )}
              </div>
             
-             <div className="flex-1 flex flex-col justify-end">
-                {/* Nút CHỤP: hiện khi chưa có ảnh, đang chụp, hoặc đang processing (chờ render) */}
-                {(capturedImages.length === 0 || isSessionActive || isProcessing) && (
+             <div className="flex-1 flex flex-col justify-end gap-2.5">
+                {/* TRƯỜNG HỢP 1: ĐANG XỬ LÝ GHÉP ẢNH */}
+                {isProcessing && (
                    <button
-                    onClick={startSession}
-                    disabled={isSessionActive || isProcessing}
-                    className={`liquid-btn-cyber w-full flex items-center justify-center gap-3 text-base py-5 transition-all h-full shadow-[0_0_35px_rgba(6,182,212,0.35)] ${
-                      isProcessing ? 'opacity-60 cursor-wait' : ''
-                    }`}
+                    disabled
+                    className="liquid-btn-cyber w-full flex items-center justify-center gap-3 text-base py-5 h-full opacity-70 cursor-wait shadow-[0_0_35px_rgba(6,182,212,0.35)]"
                    >
-                    <Camera className={`w-5 h-5 text-cyan-200 ${isProcessing ? 'animate-pulse' : ''}`} />
-                    {isProcessing ? 'ĐANG XỬ LÝ...' : `BẮT ĐẦU CHỤP (${customConfig.totalShots} ẢNH)`}
+                    <RefreshCw className="w-5 h-5 text-cyan-200 animate-spin" />
+                    <span className="font-bold tracking-wider">ĐANG GHÉP PHOTO STRIP...</span>
                    </button>
                 )}
-                {/* Nút RESET: hiện khi chụp xong và không còn đang xử lý */}
-                {capturedImages.length === customConfig.totalShots && !isSessionActive && !isProcessing && (
-                   <button
-                    onClick={resetSession}
-                    className="liquid-btn-reset w-full flex items-center justify-center gap-3 text-base py-5 h-full"
-                   >
-                    <RefreshCw className="w-5 h-5" />
-                    PHIÊN MỚI (RESET)
-                   </button>
+
+                {/* TRƯỜNG HỢP 2: ĐANG TRONG PHIÊN CHỤP (CHƯA ĐỦ SỐ ẢNH) */}
+                {!isProcessing && capturedImages.length < customConfig.totalShots && (
+                   <div className="flex flex-col gap-2 h-full justify-between">
+                     {/* Nút bấm chụp chính */}
+                     <button
+                      onClick={handleTriggerShot}
+                      disabled={countdown !== null}
+                      className="liquid-btn-cyber w-full flex-1 flex items-center justify-center gap-3 text-base py-4 shadow-[0_0_35px_rgba(6,182,212,0.35)] cursor-pointer hover:scale-[1.01] active:scale-[0.99] transition-all"
+                      title="Phím tắt: Phím Space (Cách) hoặc Enter"
+                     >
+                      <Camera className="w-5 h-5 text-cyan-200 animate-pulse" />
+                      <div className="flex flex-col items-center">
+                        <span className="font-bold tracking-wider text-base">
+                          {countdown !== null 
+                            ? `ĐANG ĐẾM LÙI (${countdown}S)...` 
+                            : capturedImages.length === 0 
+                              ? `BẮT ĐẦU CHỤP (ẢNH 1/${customConfig.totalShots})` 
+                              : `CHỤP ẢNH (${capturedImages.length + 1}/${customConfig.totalShots})`}
+                        </span>
+                        <span className="text-[10px] text-cyan-200/70 font-mono tracking-normal uppercase">
+                          Bấm chuột hoặc nhấn phím Space / Enter
+                        </span>
+                      </div>
+                     </button>
+
+                     {/* Hàng nút phụ: Chụp lại ảnh vừa rồi & Hủy phiên (chỉ hiện khi đã chụp >= 1 ảnh) */}
+                     {capturedImages.length > 0 && (
+                       <div className="flex items-center gap-2 shrink-0">
+                         <button
+                           onClick={handleRetakeLastShot}
+                           className="flex-1 liquid-glass-pill py-2 px-3 flex items-center justify-center gap-1.5 text-xs font-semibold text-cyan-300 hover:text-white border border-cyan-400/30 hover:border-cyan-400 transition-all cursor-pointer"
+                           title="Xóa ảnh vừa chụp và chụp lại ngay shot này"
+                         >
+                           <RefreshCw className="w-3.5 h-3.5" />
+                           <span>Chụp lại ảnh {capturedImages.length}</span>
+                         </button>
+                         <button
+                           onClick={resetSession}
+                           className="liquid-glass-pill py-2 px-3 flex items-center justify-center gap-1.5 text-xs font-semibold text-red-300/80 hover:text-red-200 border border-red-500/30 hover:border-red-400 transition-all cursor-pointer"
+                           title="Xóa toàn bộ ảnh đã chụp và bắt đầu lại từ ảnh 1"
+                         >
+                           <X className="w-3.5 h-3.5" />
+                           <span>Hủy phiên</span>
+                         </button>
+                       </div>
+                     )}
+                   </div>
+                )}
+
+                {/* TRƯỜNG HỢP 3: ĐÃ CHỤP ĐỦ SỐ ẢNH */}
+                {!isProcessing && capturedImages.length === customConfig.totalShots && (
+                   <div className="flex flex-col gap-2 h-full justify-between">
+                     {/* Nút In A4 nổi bật */}
+                     <button
+                      onClick={() => setIsA4ArrangerOpen(true)}
+                      className="liquid-btn-cyber w-full flex-1 flex items-center justify-center gap-3 text-base py-4 shadow-[0_0_35px_rgba(6,182,212,0.4)] cursor-pointer hover:scale-[1.01] active:scale-[0.99] transition-all"
+                     >
+                      <Scissors className="w-5 h-5 text-cyan-200" />
+                      <div className="flex flex-col items-center">
+                        <span className="font-bold tracking-wider uppercase text-base">Sắp xếp & In Trang A4</span>
+                        <span className="text-[10px] text-cyan-200/70 font-mono tracking-normal">Kéo thả dải ảnh chuẩn 300 DPI</span>
+                      </div>
+                     </button>
+
+                     {/* Hàng nút phụ: Chụp lại ảnh cuối & Bắt đầu phiên mới */}
+                     <div className="flex items-center gap-2 shrink-0">
+                       <button
+                         onClick={handleRetakeLastShot}
+                         className="flex-1 liquid-glass-pill py-2 px-3 flex items-center justify-center gap-1.5 text-xs font-semibold text-cyan-300 hover:text-white border border-cyan-400/30 hover:border-cyan-400 transition-all cursor-pointer"
+                         title="Chụp lại ảnh cuối cùng nếu chưa ưng ý"
+                       >
+                         <RefreshCw className="w-3.5 h-3.5" />
+                         <span>Chụp lại ảnh {customConfig.totalShots}</span>
+                       </button>
+
+                       <button
+                         onClick={resetSession}
+                         className="flex-1 liquid-btn-reset py-2 px-3 flex items-center justify-center gap-1.5 text-xs font-semibold transition-all cursor-pointer"
+                         title="Làm mới để chụp khách tiếp theo"
+                       >
+                         <RefreshCw className="w-3.5 h-3.5" />
+                         <span>Phiên mới (Reset)</span>
+                       </button>
+                     </div>
+                   </div>
                 )}
              </div>
            </div>
