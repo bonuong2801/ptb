@@ -14,6 +14,10 @@ contextBridge.exposeInMainWorld(
     getSavedPrinter: () => ipcRenderer.invoke('get-saved-printer'),
     savePrinter: (printerName) => ipcRenderer.invoke('save-printer', printerName),
 
+    // Accounting & Bookkeeping APIs
+    saveAccountingBackup: (data) => ipcRenderer.invoke('save-accounting-backup', data),
+    getAccountingBackup: () => ipcRenderer.invoke('get-accounting-backup'),
+
     onSyncReceived: (callback) => {
       ipcRenderer.removeAllListeners('sync-received');
       ipcRenderer.on('sync-received', (_event, data) => callback(data));

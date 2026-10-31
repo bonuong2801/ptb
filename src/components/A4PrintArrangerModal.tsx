@@ -31,7 +31,9 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
   selectedPrinter,
   onConfirmPrint
 }) => {
-  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>(() => {
+    return initialCopies >= 4 ? 'landscape' : 'portrait';
+  });
   const [showCutLines, setShowCutLines] = useState(true);
   const [activeStripId, setActiveStripId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -84,35 +86,33 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
         ...(count === 2 ? [{ id: 'strip-2', x: 53, y: 24.7, rotation: 0 as const }] : [])
       ];
     } else {
-      // Nếu 4 bản hoặc nhiều hơn -> tự động xếp ngang tiết kiệm giấy
-      return Array.from({ length: count }).map((_, i) => ({
-        id: `strip-${i + 1}`,
-        x: 14.3,
-        y: 4 + i * 23,
-        rotation: 90 as const
-      }));
+      // 4 bản trở lên: Xếp 4 dải đứng song song trên A4 Ngang
+      return [
+        { id: 'strip-1', x: 6.5, y: 14.3, rotation: 0 },
+        { id: 'strip-2', x: 29.5, y: 14.3, rotation: 0 },
+        { id: 'strip-3', x: 52.5, y: 14.3, rotation: 0 },
+        { id: 'strip-4', x: 75.5, y: 14.3, rotation: 0 }
+      ];
     }
   });
 
   // Tự động điều chỉnh khi initialCopies thay đổi
   useEffect(() => {
     const count = Math.max(1, Math.min(6, initialCopies));
-    if (count === 2) {
+    if (count <= 2) {
       setOrientation('portrait');
       setStrips([
         { id: 'strip-1', x: 23, y: 24.7, rotation: 0 },
-        { id: 'strip-2', x: 53, y: 24.7, rotation: 0 }
+        ...(count === 2 ? [{ id: 'strip-2', x: 53, y: 24.7, rotation: 0 as const }] : [])
       ]);
     } else if (count >= 4) {
-      setOrientation('portrait');
-      setStrips(
-        Array.from({ length: count }).map((_, i) => ({
-          id: `strip-${i + 1}`,
-          x: 14.3,
-          y: 3 + i * 23,
-          rotation: 90 as const
-        }))
-      );
+      setOrientation('landscape');
+      setStrips([
+        { id: 'strip-1', x: 6.5, y: 14.3, rotation: 0 },
+        { id: 'strip-2', x: 29.5, y: 14.3, rotation: 0 },
+        { id: 'strip-3', x: 52.5, y: 14.3, rotation: 0 },
+        { id: 'strip-4', x: 75.5, y: 14.3, rotation: 0 }
+      ]);
     }
   }, [initialCopies]);
 
@@ -145,20 +145,12 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
   }, []);
 
   // Các preset dàn trang thông minh
-  const applyPreset = (preset: '2-strip-portrait' | '4-strip-horizontal' | '4-strip-landscape' | '5-strip-max') => {
+  const applyPreset = (preset: '2-strip-portrait' | '4-strip-landscape') => {
     if (preset === '2-strip-portrait') {
       setOrientation('portrait');
       setStrips([
         { id: 'strip-1', x: 23, y: 24.7, rotation: 0 },
         { id: 'strip-2', x: 53, y: 24.7, rotation: 0 }
-      ]);
-    } else if (preset === '4-strip-horizontal') {
-      setOrientation('portrait');
-      setStrips([
-        { id: 'strip-1', x: 14.3, y: 4, rotation: 90 },
-        { id: 'strip-2', x: 14.3, y: 27.5, rotation: 90 },
-        { id: 'strip-3', x: 14.3, y: 51, rotation: 90 },
-        { id: 'strip-4', x: 14.3, y: 74.5, rotation: 90 }
       ]);
     } else if (preset === '4-strip-landscape') {
       setOrientation('landscape');
@@ -168,16 +160,32 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
         { id: 'strip-3', x: 52.5, y: 14.3, rotation: 0 },
         { id: 'strip-4', x: 75.5, y: 14.3, rotation: 0 }
       ]);
-    } else if (preset === '5-strip-max') {
-      setOrientation('portrait');
-      setStrips([
-        { id: 'strip-1', x: 14.3, y: 2, rotation: 90 },
-        { id: 'strip-2', x: 14.3, y: 21.5, rotation: 90 },
-        { id: 'strip-3', x: 14.3, y: 41, rotation: 90 },
-        { id: 'strip-4', x: 14.3, y: 60.5, rotation: 90 },
-        { id: 'strip-5', x: 14.3, y: 80, rotation: 90 }
-      ]);
     }
+  };
+
+  // Xoay giấy A4 90 độ (Mỗi lần bấm là xoay giữa A4 Đứng và A4 Ngang)
+  const rotatePaper90 = () => {
+    const nextOrient = orientation === 'portrait' ? 'landscape' : 'portrait';
+    setOrientation(nextOrient);
+
+    // Tự động điều chỉnh tọa độ các dải ảnh để không bị tràn lề khổ giấy mới
+    setStrips(prev => prev.map(s => {
+      const dims = getStripDimensions(s.rotation, nextOrient);
+      const clampedX = Math.min(Math.max(0, s.x), 100 - dims.w);
+      const clampedY = Math.min(Math.max(0, s.y), 100 - dims.h);
+      return { ...s, x: clampedX, y: clampedY };
+    }));
+  };
+
+  // Xoay 90 độ cho tất cả dải ảnh đang có trên trang
+  const rotateAllStrips90 = () => {
+    setStrips(prev => prev.map(s => {
+      const newRot = (s.rotation === 0 ? 90 : 0) as 0 | 90;
+      const dims = getStripDimensions(newRot, orientation);
+      const clampedX = Math.min(Math.max(0, s.x), 100 - dims.w);
+      const clampedY = Math.min(Math.max(0, s.y), 100 - dims.h);
+      return { ...s, rotation: newRot, x: Math.max(0, clampedX), y: Math.max(0, clampedY) };
+    }));
   };
 
   const toggleRotateStrip = (id: string) => {
@@ -300,13 +308,34 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
           <div className="flex-1 bg-black/40 p-4 sm:p-6 flex items-center justify-center overflow-auto relative">
             
             {/* Thước tỷ lệ trang A4 */}
-            <div className="absolute top-3 left-6 text-[11px] font-mono text-white/40 flex items-center gap-2 select-none">
+            <div className="absolute top-3 left-6 text-[11px] font-mono text-white/40 flex items-center gap-2 select-none z-20">
               <span>Khổ giấy:</span>
               <strong className="text-cyan-300 font-bold">
                 A4 {isPortrait ? 'Đứng (210 × 297 mm)' : 'Ngang (297 × 210 mm)'}
               </strong>
               <span>• Kích thước 1 dải:</span>
               <strong className="text-white/80 font-bold">50 × 150 mm</strong>
+            </div>
+
+            {/* Thanh công cụ xoay nhanh trên canvas */}
+            <div className="absolute top-3 right-6 z-20 flex items-center gap-2">
+              <button
+                onClick={rotatePaper90}
+                className="px-3.5 py-1.5 rounded-xl liquid-glass border border-cyan-400/40 text-cyan-300 hover:text-white hover:bg-cyan-500/20 text-xs font-bold flex items-center gap-1.5 transition-all shadow-lg cursor-pointer active:scale-95"
+                title="Mỗi lần ấn xoay giấy 90 độ (Đứng ⇄ Ngang)"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+                <span>Xoay giấy 90° ({isPortrait ? 'A4 Đứng' : 'A4 Ngang'})</span>
+              </button>
+
+              <button
+                onClick={rotateAllStrips90}
+                className="px-3 py-1.5 rounded-xl liquid-glass border border-white/15 text-white/70 hover:text-white hover:bg-white/10 text-xs font-bold flex items-center gap-1.5 transition-all shadow-lg cursor-pointer active:scale-95"
+                title="Xoay 90 độ tất cả dải ảnh trên trang"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+                <span>Xoay các dải 90°</span>
+              </button>
             </div>
 
             {/* Khung mô phỏng tờ giấy A4 thật */}
@@ -338,6 +367,10 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                   <div
                     key={strip.id}
                     onPointerDown={(e) => {
+                      const tgt = e.target as HTMLElement;
+                      if (tgt && tgt.closest && tgt.closest('button')) {
+                        return; // Không kích hoạt drag khi click nút xoay / xóa
+                      }
                       if (!containerRef.current) return;
                       setActiveStripId(strip.id);
                       try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
@@ -394,24 +427,29 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                       </div>
 
                       {/* Nút thao tác nhanh trên dải khi hover hoặc đang chọn */}
-                      <div className="absolute bottom-1 right-1 flex items-center gap-1 z-30 opacity-90 group-hover:opacity-100 transition-opacity">
+                      <div 
+                        onPointerDown={(e) => e.stopPropagation()}
+                        className="absolute bottom-1 right-1 flex items-center gap-1 z-30 opacity-90 group-hover:opacity-100 transition-opacity"
+                      >
                         <button
+                          onPointerDown={(e) => e.stopPropagation()}
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleRotateStrip(strip.id);
                           }}
-                          className="w-6 h-6 rounded-md bg-black/80 hover:bg-cyan-600 text-white flex items-center justify-center transition-colors shadow-md cursor-pointer"
-                          title="Xoay 90° (Dọc ⇄ Ngang)"
+                          className="w-6 h-6 rounded-md bg-black/80 hover:bg-cyan-600 text-white flex items-center justify-center transition-colors shadow-md cursor-pointer active:scale-90"
+                          title="Xoay 90° dải ảnh này (Dọc ⇄ Ngang)"
                         >
                           <RotateCw className="w-3 h-3" />
                         </button>
                         {strips.length > 1 && (
                           <button
+                            onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => {
                               e.stopPropagation();
                               removeStrip(strip.id);
                             }}
-                            className="w-6 h-6 rounded-md bg-black/80 hover:bg-red-600 text-white flex items-center justify-center transition-colors shadow-md cursor-pointer"
+                            className="w-6 h-6 rounded-md bg-black/80 hover:bg-red-600 text-white flex items-center justify-center transition-colors shadow-md cursor-pointer active:scale-90"
                             title="Xóa dải này"
                           >
                             <Trash2 className="w-3 h-3 text-red-300 hover:text-white" />
@@ -436,37 +474,21 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                   <LayoutGrid className="w-3.5 h-3.5 text-cyan-400" />
                   Bố cục mẫu nhanh (1 Click)
                 </label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2.5">
                   <button
                     onClick={() => applyPreset('2-strip-portrait')}
-                    className="p-2.5 rounded-xl text-left liquid-glass-interactive border border-white/10 hover:border-cyan-400/50 transition-all cursor-pointer group"
+                    className="p-3 rounded-xl text-left liquid-glass-interactive border border-white/10 hover:border-cyan-400/50 transition-all cursor-pointer group"
                   >
                     <div className="text-xs font-bold text-white group-hover:text-cyan-300">2 Dải Đứng (Cặp đôi)</div>
-                    <div className="text-[10px] text-white/50">A4 Dọc • 2 dải ở giữa</div>
-                  </button>
-
-                  <button
-                    onClick={() => applyPreset('4-strip-horizontal')}
-                    className="p-2.5 rounded-xl text-left liquid-glass-interactive border border-white/10 hover:border-cyan-400/50 transition-all cursor-pointer group"
-                  >
-                    <div className="text-xs font-bold text-white group-hover:text-cyan-300">4 Dải Ngang (Tiết kiệm)</div>
-                    <div className="text-[10px] text-white/50">A4 Dọc • 4 dải ngang</div>
+                    <div className="text-[10px] text-white/50 mt-0.5">A4 Dọc • 2 dải ở giữa</div>
                   </button>
 
                   <button
                     onClick={() => applyPreset('4-strip-landscape')}
-                    className="p-2.5 rounded-xl text-left liquid-glass-interactive border border-white/10 hover:border-cyan-400/50 transition-all cursor-pointer group"
+                    className="p-3 rounded-xl text-left liquid-glass-interactive border border-white/10 hover:border-cyan-400/50 transition-all cursor-pointer group"
                   >
                     <div className="text-xs font-bold text-white group-hover:text-cyan-300">4 Dải Đứng (A4 Ngang)</div>
-                    <div className="text-[10px] text-white/50">A4 Ngang • 4 dải đứng</div>
-                  </button>
-
-                  <button
-                    onClick={() => applyPreset('5-strip-max')}
-                    className="p-2.5 rounded-xl text-left liquid-glass-interactive border border-white/10 hover:border-cyan-400/50 transition-all cursor-pointer group"
-                  >
-                    <div className="text-xs font-bold text-white group-hover:text-cyan-300">5 Dải (Tối đa A4)</div>
-                    <div className="text-[10px] text-white/50">A4 Dọc • 5 dải tối đa</div>
+                    <div className="text-[10px] text-white/50 mt-0.5">A4 Ngang • 4 dải đứng</div>
                   </button>
                 </div>
               </div>
@@ -480,27 +502,26 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
 
                 {/* Hướng giấy */}
                 <div className="flex items-center justify-between liquid-glass p-3 rounded-xl border border-white/10">
-                  <span className="text-xs text-white/80">Hướng giấy A4:</span>
+                  <div>
+                    <span className="text-xs text-white/80 block">Khổ giấy A4:</span>
+                    <span className="text-[10px] text-cyan-400 font-mono font-bold">
+                      {isPortrait ? 'A4 Đứng (210×297mm)' : 'A4 Ngang (297×210mm)'}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-1.5">
                     <button
-                      onClick={() => setOrientation('portrait')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        isPortrait 
-                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50' 
-                          : 'text-white/60 hover:text-white'
-                      }`}
+                      onClick={rotatePaper90}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-400/50 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 shadow"
+                      title="Mỗi lần bấm xoay 90 độ (Đứng ⇄ Ngang)"
                     >
-                      A4 Đứng
+                      <RotateCw className="w-3.5 h-3.5" />
+                      <span>Xoay giấy 90°</span>
                     </button>
                     <button
-                      onClick={() => setOrientation('landscape')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        !isPortrait 
-                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50' 
-                          : 'text-white/60 hover:text-white'
-                      }`}
+                      onClick={() => setOrientation(isPortrait ? 'landscape' : 'portrait')}
+                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white/60 hover:text-white hover:bg-white/10 border border-white/10 transition-all cursor-pointer"
                     >
-                      A4 Ngang
+                      {isPortrait ? '→ Sang Ngang' : '→ Sang Đứng'}
                     </button>
                   </div>
                 </div>

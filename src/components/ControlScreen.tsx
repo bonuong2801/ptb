@@ -1,10 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, RefreshCw, ExternalLink, LayoutDashboard, Trash2, X, Scissors, Printer, FileText } from 'lucide-react';
+import { Camera, RefreshCw, ExternalLink, LayoutDashboard, Trash2, X, Scissors, Printer, FileText, DollarSign, Wallet, CreditCard } from 'lucide-react';
 import { CustomFrameConfig, CHANNEL_NAME } from '../types/booth';
 import { SyncService } from '../utils/syncService';
 import { generateFinalImage, syncDB } from '../utils/frameRenderer';
 import { VisualFrameEditor, ScalablePreview } from './VisualFrameEditor';
 import { A4PrintArrangerModal } from './A4PrintArrangerModal';
+import { ReconciliationModal } from './ReconciliationModal';
+import { billingService, calculateTieredPrice, getVietQrUrl, DEFAULT_PRICING, DEFAULT_BANK } from '../utils/billingService';
+import { BillingSettings, PaymentMethod } from '../types/billing';
 
 export function ControlScreen() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -485,6 +488,56 @@ export function ControlScreen() {
   const [printCopies, setPrintCopies] = useState(2);
   const hasShownPrintModalRef = useRef(false);
 
+  // ─── Sổ Thu Chi & Quản Lý Doanh Thu ───
+  const [isReconciliationOpen, setIsReconciliationOpen] = useState(false);
+  const [billingSettings, setBillingSettings] = useState<BillingSettings>({ pricing: DEFAULT_PRICING, bank: DEFAULT_BANK });
+  const [todayRevenue, setTodayRevenue] = useState(0);
+  const [todayOrdersCount, setTodayOrdersCount] = useState(0);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const [orderNote, setOrderNote] = useState('');
+  const [hasRecordedOrderForSession, setHasRecordedOrderForSession] = useState(false);
+
+  const refreshTodayStats = async () => {
+    try {
+      const orders = await billingService.getAllOrders();
+      const settings = await billingService.getSettings();
+      setBillingSettings(settings);
+      const todayStr = new Date().toISOString().split('T')[0];
+      const summary = billingService.calculateSummary(orders, todayStr);
+      setTodayRevenue(summary.totalRevenue);
+      setTodayOrdersCount(summary.totalOrders);
+    } catch (e) {
+      console.warn('Lỗi cập nhật thống kê thu chi:', e);
+    }
+  };
+
+  useEffect(() => {
+    refreshTodayStats();
+  }, []);
+
+  const recordCurrentOrder = async () => {
+    if (hasRecordedOrderForSession) return;
+    try {
+      const priceCalc = calculateTieredPrice(printCopies, billingSettings.pricing);
+      await billingService.addOrder({
+        sessionName: savedSessionRef.current || `Session_${Date.now()}`,
+        frameId: customConfig.id,
+        frameName: customConfig.name,
+        totalShots: customConfig.totalShots,
+        copies: printCopies,
+        totalAmount: paymentMethod === 'free' ? 0 : priceCalc.total,
+        originalAmount: priceCalc.original,
+        discount: paymentMethod === 'free' ? priceCalc.original : priceCalc.discount,
+        paymentMethod,
+        note: orderNote,
+      });
+      setHasRecordedOrderForSession(true);
+      await refreshTodayStats();
+    } catch (err) {
+      console.error('Lỗi lưu đơn hàng:', err);
+    }
+  };
+
   // Tự động mở cửa sổ in ảnh khi đã có ảnh hoàn chỉnh (chỉ mở 1 lần mỗi phiên chụp)
   useEffect(() => {
     if (capturedImages.length === customConfig.totalShots && !isSessionActive && !isProcessing && finalImage && !hasShownPrintModalRef.current) {
@@ -578,6 +631,9 @@ export function ControlScreen() {
     setCurrentShotIndex(0);
     setIsSessionActive(false);
     setIsProcessing(false);
+    setHasRecordedOrderForSession(false);
+    setPaymentMethod('cash');
+    setOrderNote('');
   };
 
   // Phím tắt toàn cục: Space / Enter để kích hoạt chụp chủ động (Remote/Bàn đạp/Bàn phím)
@@ -619,6 +675,15 @@ export function ControlScreen() {
         </div>
 
         <div className="flex items-center gap-3">
+          <button 
+            onClick={() => setIsReconciliationOpen(true)}
+            className="liquid-glass-pill text-xs font-bold uppercase tracking-wider text-cyan-300 hover:text-white px-3.5 py-2 hover:border-cyan-400/50 hover:shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all flex items-center gap-2 cursor-pointer active:scale-95"
+            title="Mở Sổ Thu Chi & Đối Chiếu Cuối Buổi"
+          >
+            <DollarSign className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Sổ Sách: <strong className="text-white font-mono">{todayRevenue.toLocaleString('vi-VN')} đ</strong> ({todayOrdersCount} đơn)</span>
+          </button>
+
           {!cameraReady && (
             <button 
               onClick={() => {
@@ -983,53 +1048,150 @@ export function ControlScreen() {
         </div>
       )}
 
-      {/* Bước 1: Modal Chọn Số Lượng Bản In */}
-      {isPrintModalOpen && finalImage && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-zoom-in">
-          <div className="liquid-glass border border-white/20 p-7 rounded-3xl w-full max-w-lg flex flex-col gap-5 shadow-[0_25px_60px_rgba(0,0,0,0.8)] items-center">
+      {/* Bước 1: Modal Chọn Số Lượng Bản In & Tính Tiền Bậc Thang */}
+      {isPrintModalOpen && finalImage && (() => {
+        const priceCalc = calculateTieredPrice(printCopies, billingSettings.pricing);
+        const displayTotal = paymentMethod === 'free' ? 0 : priceCalc.total;
+        const vietQrUrl = getVietQrUrl(
+          billingSettings.bank.bankId,
+          billingSettings.bank.accountNumber,
+          displayTotal,
+          `CGBOOTH ${printCopies}F`,
+          billingSettings.bank.accountHolder
+        );
+
+        return (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-zoom-in">
+            <div className="liquid-glass border border-cyan-400/30 p-6 rounded-3xl w-full max-w-lg max-h-[95vh] overflow-y-auto custom-scrollbar flex flex-col items-center gap-4 shadow-[0_25px_60px_rgba(0,0,0,0.8)]">
               <div className="text-center">
                 <span className="text-[10px] font-mono uppercase tracking-widest text-cyan-300 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-400/20">
-                  Bước 1/2: Chọn số lượng bản in
+                  Bước 1/2: Cấu Hình In & Tính Tiền
                 </span>
-                <h2 className="text-2xl font-black text-white uppercase tracking-wider mt-2">CẤU HÌNH IN ẢNH</h2>
+                <h2 className="text-2xl font-black text-white uppercase tracking-wider mt-2">XÁC NHẬN IN & THANH TOÁN</h2>
               </div>
               
-              <div className="w-full bg-black/40 rounded-2xl p-4 flex justify-center border border-white/10 shadow-inner">
-                <img src={finalImage} alt="Preview" className="max-h-[26vh] object-contain rounded-lg drop-shadow-2xl" />
+              <div className="w-full bg-black/40 rounded-2xl p-3 flex justify-center border border-white/10 shadow-inner">
+                <img src={finalImage} alt="Preview" className="max-h-[18vh] object-contain rounded-lg drop-shadow-2xl" />
               </div>
 
               {/* Bộ chọn số lượng in */}
-              <div className="flex flex-col gap-2 w-full text-center">
-                <p className="text-xs text-white/70 uppercase tracking-widest font-mono">SỐ LƯỢNG BẢN IN DẢI ẢNH</p>
-                <div className="flex items-center justify-center gap-6 mt-1">
-                  <button onClick={() => setPrintCopies(Math.max(1, printCopies - 1))} className="liquid-glass-pill text-cyan-300 hover:text-white w-12 h-12 flex items-center justify-center text-2xl transition-all cursor-pointer active:scale-90 border border-cyan-400/30">-</button>
-                  <span className="text-5xl font-black text-white w-16 text-center text-glow-cyan">{printCopies}</span>
-                  <button onClick={() => setPrintCopies(printCopies + 1)} className="liquid-glass-pill text-cyan-300 hover:text-white w-12 h-12 flex items-center justify-center text-2xl transition-all cursor-pointer active:scale-90 border border-cyan-400/30">+</button>
+              <div className="flex flex-col gap-2 w-full text-center bg-black/30 p-3.5 rounded-2xl border border-white/10">
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-white/70 uppercase">SỐ LƯỢNG FRAME:</span>
+                  <span className="text-cyan-300 font-bold">{priceCalc.averagePerFrame.toLocaleString('vi-VN')} đ / frame</span>
+                </div>
+
+                <div className="flex items-center justify-center gap-6 my-1">
+                  <button onClick={() => setPrintCopies(Math.max(1, printCopies - 1))} className="liquid-glass-pill text-cyan-300 hover:text-white w-11 h-11 flex items-center justify-center text-2xl transition-all cursor-pointer active:scale-90 border border-cyan-400/30">-</button>
+                  <span className="text-4xl font-black text-white w-16 text-center text-glow-cyan">{printCopies}</span>
+                  <button onClick={() => setPrintCopies(printCopies + 1)} className="liquid-glass-pill text-cyan-300 hover:text-white w-11 h-11 flex items-center justify-center text-2xl transition-all cursor-pointer active:scale-90 border border-cyan-400/30">+</button>
                 </div>
 
                 {/* Phím tắt số lượng nhanh */}
-                <div className="flex items-center justify-center gap-2 mt-1">
-                  {[1, 2, 4, 5].map((num) => (
+                <div className="grid grid-cols-5 gap-1.5 mt-0.5">
+                  {[1, 2, 3, 4, 5].map((num) => (
                     <button
                       key={num}
                       onClick={() => setPrintCopies(num)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      className={`py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                         printCopies === num 
-                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/40' 
+                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 shadow-[0_0_10px_rgba(6,182,212,0.3)]' 
                           : 'liquid-glass-pill text-white/60 hover:text-white'
                       }`}
                     >
-                      {num} Bản
+                      {num} Frame
                     </button>
                   ))}
                 </div>
               </div>
 
+              {/* Bảng tính tiền bậc thang chi tiết */}
+              <div className="w-full p-3.5 rounded-2xl bg-gradient-to-br from-cyan-950/40 via-slate-900/60 to-black/80 border border-cyan-400/30 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between text-xs text-slate-300">
+                  <span>Cơ chế giá:</span>
+                  <span className="font-mono text-cyan-300 font-bold">{priceCalc.formula}</span>
+                </div>
+                <div className="flex items-baseline justify-between pt-1 border-t border-white/10">
+                  <div className="flex flex-col">
+                    <span className="text-[11px] uppercase font-bold text-slate-400">TỔNG THANH TOÁN</span>
+                    {paymentMethod === 'free' ? (
+                      <span className="text-xs text-slate-400 font-semibold">🏷️ Chụp test (Không tính tiền)</span>
+                    ) : priceCalc.discount > 0 ? (
+                      <span className="text-xs text-emerald-400 font-semibold">✨ Tiết kiệm {priceCalc.discount.toLocaleString('vi-VN')} đ (-{priceCalc.discountPercent}%)</span>
+                    ) : (
+                      <span className="text-xs text-slate-400">Giá chuẩn cho 1 frame</span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-3xl font-black text-cyan-300 text-glow-cyan">{displayTotal.toLocaleString('vi-VN')}</span>
+                    <span className="text-sm font-bold text-cyan-400">VNĐ</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chọn hình thức thanh toán */}
+              <div className="w-full flex flex-col gap-2">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">HÌNH THỨC THANH TOÁN:</span>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setPaymentMethod('cash')}
+                    className={`p-2.5 rounded-2xl flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                      paymentMethod === 'cash'
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
+                        : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/10'
+                    }`}
+                  >
+                    <span className="text-xl">💵</span>
+                    <span className="text-xs font-bold uppercase">Tiền Mặt</span>
+                  </button>
+
+                  <button
+                    onClick={() => setPaymentMethod('transfer')}
+                    className={`p-2.5 rounded-2xl flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                      paymentMethod === 'transfer'
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
+                        : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/10'
+                    }`}
+                  >
+                    <span className="text-xl">💳</span>
+                    <span className="text-xs font-bold uppercase">Chuyển Khoản</span>
+                  </button>
+
+                  <button
+                    onClick={() => setPaymentMethod('free')}
+                    className={`p-2.5 rounded-2xl flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                      paymentMethod === 'free'
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
+                        : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/10'
+                    }`}
+                  >
+                    <span className="text-xl">🏷️</span>
+                    <span className="text-xs font-bold uppercase">Chụp Test (0đ)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Hộp VietQR nếu chọn Chuyển khoản */}
+              {paymentMethod === 'transfer' && displayTotal > 0 && vietQrUrl && (
+                <div className="w-full flex flex-col items-center gap-2 p-3 rounded-2xl bg-white/5 border border-cyan-400/30 animate-fadeIn">
+                  <span className="text-xs font-bold text-cyan-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>📱</span> Quét VietQR đúng số tiền: <strong className="text-white font-mono">{displayTotal.toLocaleString('vi-VN')} đ</strong>
+                  </span>
+                  <div className="w-40 h-40 bg-white p-2 rounded-xl flex items-center justify-center shadow-2xl">
+                    <img src={vietQrUrl} alt="VietQR" className="w-full h-full object-contain" />
+                  </div>
+                  <p className="text-[11px] text-slate-400 text-center font-mono">
+                    {billingSettings.bank.bankName} • STK: {billingSettings.bank.accountNumber} ({billingSettings.bank.accountHolder})
+                  </p>
+                </div>
+              )}
+
               {/* Các nút hành động */}
-              <div className="flex flex-col gap-2.5 w-full mt-2">
+              <div className="flex flex-col gap-2.5 w-full mt-1">
                 {/* Nút chính: Chuyển sang Bước 2 Dàn trang A4 */}
                 <button 
-                  onClick={() => {
+                  onClick={async () => {
+                    await recordCurrentOrder();
                     setIsPrintModalOpen(false);
                     setIsA4ArrangerOpen(true);
                   }}
@@ -1049,7 +1211,10 @@ export function ControlScreen() {
                   </button>
                   
                   <button 
-                    onClick={handlePrint} 
+                    onClick={async () => {
+                      await recordCurrentOrder();
+                      handlePrint();
+                    }} 
                     className="flex-1 liquid-glass-pill text-cyan-300 hover:text-white hover:border-cyan-400/40 py-3 rounded-xl font-bold tracking-wider transition-all uppercase text-xs cursor-pointer flex items-center justify-center gap-1.5"
                     title="In trực tiếp nếu dùng máy in nhiệt chuyên dụng 5x15cm"
                   >
@@ -1059,8 +1224,9 @@ export function ControlScreen() {
                 </div>
               </div>
             </div>
-        </div>
-      )}
+          </div>
+        );
+      })()}
 
       {/* Bước 2: Modal Dàn trang & Kéo thả các dải ảnh trên khổ giấy A4 */}
       {finalImage && (
@@ -1070,9 +1236,19 @@ export function ControlScreen() {
           finalImage={finalImage}
           initialCopies={printCopies}
           selectedPrinter={selectedPrinter}
-          onConfirmPrint={handleA4Print}
+          onConfirmPrint={async (a4Base64) => {
+            await recordCurrentOrder();
+            await handleA4Print(a4Base64);
+          }}
         />
       )}
+
+      {/* Modal Sổ Thu Chi & Đối Chiếu Cuối Buổi */}
+      <ReconciliationModal
+        isOpen={isReconciliationOpen}
+        onClose={() => setIsReconciliationOpen(false)}
+        onOrderChanged={refreshTodayStats}
+      />
     </div>
   );
 }

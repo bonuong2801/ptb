@@ -301,3 +301,34 @@ ipcMain.handle('save-session', async (event, { sessionName, finalImage, rawImage
     return { success: false, error: error.message };
   }
 });
+
+// -------------------------------------------------------------
+// ACCOUNTING & BOOKKEEPING BACKUP IPCs
+// -------------------------------------------------------------
+const getAccountingFilePath = () => path.join(getSaveDirectory(), 'accounting_records.json');
+
+ipcMain.handle('save-accounting-backup', async (event, data) => {
+  try {
+    const filePath = getAccountingFilePath();
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
+    return { success: true };
+  } catch (err) {
+    console.error('[CGBOOTH] Lỗi khi lưu backup sổ sách:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('get-accounting-backup', async () => {
+  try {
+    const filePath = getAccountingFilePath();
+    if (fs.existsSync(filePath)) {
+      const content = await fs.promises.readFile(filePath, 'utf8');
+      return JSON.parse(content);
+    }
+  } catch (err) {
+    console.warn('[CGBOOTH] Không thể đọc file backup sổ sách:', err.message);
+  }
+  return null;
+});

@@ -36,6 +36,8 @@ declare global {
       printImage?: (data: { imageBase64: string; copies: number; printerName?: string }) => Promise<{ success: boolean; error?: string }>;
       getSavedPrinter?: () => Promise<string>;
       savePrinter?: (name: string) => Promise<boolean>;
+      saveAccountingBackup?: (data: any) => Promise<{ success: boolean; error?: string }>;
+      getAccountingBackup?: () => Promise<any>;
     };
   }
 }
