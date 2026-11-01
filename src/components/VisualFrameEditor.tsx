@@ -2,8 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Upload, RotateCw } from 'lucide-react';
 import { CustomFrameConfig, PhotoShape } from '../types/booth';
 
-// Shared Strip Preview Component
-export function StripPreview({ config, capturedImages, className = "" }: { config: CustomFrameConfig, capturedImages: string[], className?: string }) {
+// Shared Strip Preview Component (Memoized for zero re-renders during editing)
+export const StripPreview = React.memo(function StripPreview({ config, capturedImages, className = "" }: { config: CustomFrameConfig, capturedImages: string[], className?: string }) {
   const isSquareFrame = config.frameShape === 'square';
   const aspectClass = isSquareFrame ? 'aspect-square' : 'aspect-[1/3]';
   const currentLayouts = config.photoLayouts || Array.from({length: config.totalShots}).map((_, i) => ({ x: 10, y: 10 + (i * 20), width: 80, height: 15, rotation: 0 }));
@@ -43,10 +43,10 @@ export function StripPreview({ config, capturedImages, className = "" }: { confi
       )}
     </div>
   );
-}
+});
 
-// Auto-scaling wrapper for perfect fit
-export function ScalablePreview({ config, capturedImages }: { config: CustomFrameConfig, capturedImages: string[] }) {
+// Auto-scaling wrapper for perfect fit (Memoized)
+export const ScalablePreview = React.memo(function ScalablePreview({ config, capturedImages }: { config: CustomFrameConfig, capturedImages: string[] }) {
   const isSquareFrame = config.frameShape === 'square';
   const aspectClass = isSquareFrame ? 'aspect-square' : 'aspect-[1/3]';
 
@@ -68,13 +68,53 @@ export function ScalablePreview({ config, capturedImages }: { config: CustomFram
       </div>
     </div>
   );
-}
+});
 
 export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameConfig, setConfig: React.Dispatch<React.SetStateAction<CustomFrameConfig>> }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeSlotIdx, setActiveSlotIdx] = useState<number>(0);
 
-  // Drag & Rotate State with zero-reflow dimension caching and RAF throttling
+  // LOCAL STATE ISOLATION: Trạng thái cục bộ độc lập hoàn toàn với ControlScreen
+  const [localConfig, setLocalConfig] = useState<CustomFrameConfig>(config);
+  const lastSyncedIdRef = useRef(config.id);
+  const isInitialMount = useRef(true);
+  const localConfigRef = useRef(localConfig);
+  localConfigRef.current = localConfig;
+
+  // Đồng bộ từ ngoài vào chỉ khi ID của frame thay đổi (chọn frame khác từ danh sách)
+  useEffect(() => {
+    if (config.id !== lastSyncedIdRef.current) {
+      lastSyncedIdRef.current = config.id;
+      setLocalConfig(config);
+    }
+  }, [config]);
+
+  // Debounced Sync (300ms) ngầm về ControlScreen mà không làm khựng hay lag giao diện
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      setConfig(localConfig);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [localConfig, setConfig]);
+
+  // Đảm bảo dữ liệu mới nhất luôn được commit về ControlScreen khi đóng modal
+  useEffect(() => {
+    return () => {
+      setConfig(localConfigRef.current);
+    };
+  }, [setConfig]);
+
+  // Tham chiếu trực tiếp đến các phần tử DOM để cập nhật toạ độ GPU 60-120fps không qua React re-render
+  const slotRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const badgeRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const rotationDisplayRef = useRef<HTMLSpanElement>(null);
+  const rotationSliderRef = useRef<HTMLInputElement>(null);
+
+  // Drag & Rotate State với Direct DOM manipulation và RAF throttling
   const dragRef = useRef<{
     idx: number;
     type: 'drag' | 'resize' | 'rotate';
@@ -85,10 +125,17 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
     initW: number;
     initH: number;
     initRotation: number;
+    currentX: number;
+    currentY: number;
+    currentW: number;
+    currentH: number;
+    currentRotation: number;
     centerX: number;
     centerY: number;
     rectW: number;
     rectH: number;
+    slotEl: HTMLDivElement | null;
+    badgeEl: HTMLDivElement | null;
   } | null>(null);
 
   const rafRef = useRef<number | null>(null);
@@ -104,37 +151,52 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
       rafRef.current = requestAnimationFrame(() => {
         rafRef.current = null;
         if (!dragRef.current || !latestPointerRef.current) return;
-        const { idx, type, startX, startY, initX, initY, initW, initH, initRotation, centerX, centerY, rectW, rectH } = dragRef.current;
+        const drag = dragRef.current;
         const { clientX, clientY } = latestPointerRef.current;
 
-        const dx = ((clientX - startX) / rectW) * 100;
-        const dy = ((clientY - startY) / rectH) * 100;
+        const dx = ((clientX - drag.startX) / drag.rectW) * 100;
+        const dy = ((clientY - drag.startY) / drag.rectH) * 100;
 
-        setConfig(prev => {
-          const newLayouts = [...(prev.photoLayouts || [])];
-          const layout = newLayouts[idx] || { x: 10, y: 10, width: 80, height: 15, rotation: 0 };
-          if (type === 'drag') {
-            const nextX = Math.round(Math.max(0, Math.min(100 - layout.width, initX + dx)) * 10) / 10;
-            const nextY = Math.round(Math.max(0, Math.min(100 - layout.height, initY + dy)) * 10) / 10;
-            if (layout.x === nextX && layout.y === nextY) return prev;
-            newLayouts[idx] = { ...layout, x: nextX, y: nextY };
-          } else if (type === 'resize') {
-            const nextW = Math.round(Math.max(5, Math.min(100 - layout.x, initW + dx)) * 10) / 10;
-            const nextH = Math.round(Math.max(5, Math.min(100 - layout.y, initH + dy)) * 10) / 10;
-            if (layout.width === nextW && layout.height === nextH) return prev;
-            newLayouts[idx] = { ...layout, width: nextW, height: nextH };
-          } else if (type === 'rotate') {
-            const currentAngle = Math.atan2(clientY - centerY, clientX - centerX) * (180 / Math.PI);
-            const startAngle = Math.atan2(startY - centerY, startX - centerX) * (180 / Math.PI);
-            let delta = currentAngle - startAngle;
-            let newRot = Math.round((initRotation + delta) * 2) / 2; // snap to 0.5 deg
-            while (newRot > 180) newRot -= 360;
-            while (newRot < -180) newRot += 360;
-            if (layout.rotation === newRot) return prev;
-            newLayouts[idx] = { ...layout, rotation: newRot };
+        if (drag.type === 'drag') {
+          const nextX = Math.round(Math.max(0, Math.min(100 - drag.initW, drag.initX + dx)) * 10) / 10;
+          const nextY = Math.round(Math.max(0, Math.min(100 - drag.initH, drag.initY + dy)) * 10) / 10;
+          drag.currentX = nextX;
+          drag.currentY = nextY;
+          if (drag.slotEl) {
+            drag.slotEl.style.left = `${nextX}%`;
+            drag.slotEl.style.top = `${nextY}%`;
           }
-          return { ...prev, photoLayouts: newLayouts };
-        });
+        } else if (drag.type === 'resize') {
+          const nextW = Math.round(Math.max(5, Math.min(100 - drag.initX, drag.initW + dx)) * 10) / 10;
+          const nextH = Math.round(Math.max(5, Math.min(100 - drag.initY, drag.initH + dy)) * 10) / 10;
+          drag.currentW = nextW;
+          drag.currentH = nextH;
+          if (drag.slotEl) {
+            drag.slotEl.style.width = `${nextW}%`;
+            drag.slotEl.style.height = `${nextH}%`;
+          }
+        } else if (drag.type === 'rotate') {
+          const currentAngle = Math.atan2(clientY - drag.centerY, clientX - drag.centerX) * (180 / Math.PI);
+          const startAngle = Math.atan2(drag.startY - drag.centerY, drag.startX - drag.centerX) * (180 / Math.PI);
+          let delta = currentAngle - startAngle;
+          let newRot = Math.round((drag.initRotation + delta) * 2) / 2; // snap to 0.5 deg
+          while (newRot > 180) newRot -= 360;
+          while (newRot < -180) newRot += 360;
+          drag.currentRotation = newRot;
+          if (drag.slotEl) {
+            drag.slotEl.style.transform = `rotate(${newRot}deg)`;
+          }
+          if (drag.badgeEl) {
+            drag.badgeEl.textContent = newRot > 0 ? `+${newRot}°` : `${newRot}°`;
+            drag.badgeEl.style.display = newRot === 0 ? 'none' : 'block';
+          }
+          if (rotationDisplayRef.current) {
+            rotationDisplayRef.current.textContent = newRot > 0 ? `+${newRot}°` : `${newRot}°`;
+          }
+          if (rotationSliderRef.current) {
+            rotationSliderRef.current.value = String(newRot);
+          }
+        }
       });
     };
 
@@ -143,8 +205,26 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
-      dragRef.current = null;
-      latestPointerRef.current = null;
+      if (dragRef.current) {
+        const { idx, currentX, currentY, currentW, currentH, currentRotation } = dragRef.current;
+        dragRef.current = null;
+        latestPointerRef.current = null;
+
+        // Cập nhật vào LOCAL STATE độc lập, chỉ tốn < 0.5ms và KHÔNG re-render ControlScreen
+        setLocalConfig(prev => {
+          const newLayouts = [...(prev.photoLayouts || [])];
+          const layout = newLayouts[idx] || { x: 10, y: 10, width: 80, height: 15, rotation: 0 };
+          newLayouts[idx] = {
+            ...layout,
+            x: currentX,
+            y: currentY,
+            width: currentW,
+            height: currentH,
+            rotation: currentRotation,
+          };
+          return { ...prev, photoLayouts: newLayouts };
+        });
+      }
     };
 
     window.addEventListener('pointermove', handleMove, { passive: true });
@@ -156,13 +236,13 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
     };
-  }, [setConfig]);
+  }, []);
 
   const updateRotation = (idx: number, angle: number) => {
     let cleanAngle = Math.round(angle * 2) / 2;
     while (cleanAngle > 180) cleanAngle -= 360;
     while (cleanAngle < -180) cleanAngle += 360;
-    setConfig(prev => {
+    setLocalConfig(prev => {
       const newLayouts = [...(prev.photoLayouts || [])];
       const layout = newLayouts[idx] || { x: 10, y: 10, width: 80, height: 15, rotation: 0 };
       newLayouts[idx] = { ...layout, rotation: cleanAngle };
@@ -190,17 +270,17 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
   }, []);
 
   const addSlot = () => {
-     setConfig(prev => {
+     setLocalConfig(prev => {
         const currentLayouts = prev.photoLayouts || Array.from({length: prev.totalShots}).map((_, i) => ({ x: 10, y: 10 + (i * 20), width: 80, height: 15, rotation: 0 }));
         const newLayouts = [...currentLayouts, { x: 20, y: 20, width: 30, height: 20, rotation: 0 }];
         const newShapes = [...prev.photoShapes, 'rectangle' as PhotoShape];
         return { ...prev, totalShots: newLayouts.length, photoLayouts: newLayouts, photoShapes: newShapes, layoutMode: 'freeform' };
      });
-     setActiveSlotIdx(currentLayouts.length);
+     setActiveSlotIdx((localConfig.photoLayouts?.length || localConfig.totalShots));
   };
 
   const removeSlot = (idx: number) => {
-     setConfig(prev => {
+     setLocalConfig(prev => {
         const currentLayouts = prev.photoLayouts || Array.from({length: prev.totalShots}).map((_, i) => ({ x: 10, y: 10 + (i * 20), width: 80, height: 15, rotation: 0 }));
         const newLayouts = [...currentLayouts];
         newLayouts.splice(idx, 1);
@@ -216,7 +296,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
   };
 
   const toggleShape = (idx: number) => {
-     setConfig(prev => {
+     setLocalConfig(prev => {
         const newShapes = [...prev.photoShapes];
         newShapes[idx] = newShapes[idx] === 'circle' ? 'rectangle' : 'circle';
         return { ...prev, photoShapes: newShapes };
@@ -228,17 +308,17 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setConfig(prev => ({...prev, frameImage: reader.result as string}));
+        setLocalConfig(prev => ({...prev, frameImage: reader.result as string}));
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const currentLayouts = config.photoLayouts || Array.from({length: config.totalShots}).map((_, i) => ({ x: 10, y: 10 + (i * 20), width: 80, height: 15, rotation: 0 }));
+  const currentLayouts = localConfig.photoLayouts || Array.from({length: localConfig.totalShots}).map((_, i) => ({ x: 10, y: 10 + (i * 20), width: 80, height: 15, rotation: 0 }));
   const effectiveSlotIdx = (activeSlotIdx !== null && activeSlotIdx >= 0 && activeSlotIdx < currentLayouts.length)
     ? activeSlotIdx
     : (currentLayouts.length > 0 ? 0 : null);
-  const aspectClass = config.frameShape === 'square' ? 'aspect-square' : 'aspect-[1/3]';
+  const aspectClass = localConfig.frameShape === 'square' ? 'aspect-square' : 'aspect-[1/3]';
 
   return (
     <div className="w-full flex flex-col gap-4">
@@ -248,11 +328,11 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
             <div className="flex items-center gap-2">
                <label className="flex items-center gap-2 cursor-pointer liquid-glass-pill hover:border-cyan-400/40 px-3.5 py-1.5 rounded-full text-sm transition-all">
                   <Upload className="w-4 h-4 text-cyan-400" />
-                  <span className="text-white/90 text-xs font-medium">{config.frameImage ? 'Đổi Frame' : 'Tải Frame lên'}</span>
+                  <span className="text-white/90 text-xs font-medium">{localConfig.frameImage ? 'Đổi Frame' : 'Tải Frame lên'}</span>
                   <input type="file" accept="image/png" onChange={handleFileUpload} className="hidden" />
                </label>
-               {config.frameImage && (
-                 <button onClick={() => setConfig(prev => ({...prev, frameImage: null}))} className="text-[10px] text-red-400 hover:bg-red-500/20 px-2.5 py-1 rounded-full transition-colors">Xoá Ảnh</button>
+               {localConfig.frameImage && (
+                 <button onClick={() => setLocalConfig(prev => ({...prev, frameImage: null}))} className="text-[10px] text-red-400 hover:bg-red-500/20 px-2.5 py-1 rounded-full transition-colors">Xoá Ảnh</button>
                )}
             </div>
          </div>
@@ -260,16 +340,16 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
             <div>
               <label className="text-xs text-white/50 uppercase tracking-widest block mb-1 font-mono">Tỉ Lệ Khung</label>
               <div className="flex liquid-glass-pill p-1 gap-1">
-                 <button onClick={() => setConfig(prev => ({...prev, frameShape: 'rectangle'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${config.frameShape === 'rectangle' ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Chữ Nhật</button>
-                 <button onClick={() => setConfig(prev => ({...prev, frameShape: 'square'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${config.frameShape === 'square' ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Vuông</button>
+                 <button onClick={() => setLocalConfig(prev => ({...prev, frameShape: 'rectangle'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${localConfig.frameShape === 'rectangle' ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Chữ Nhật</button>
+                 <button onClick={() => setLocalConfig(prev => ({...prev, frameShape: 'square'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${localConfig.frameShape === 'square' ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Vuông</button>
               </div>
             </div>
             
             <div>
               <label className="text-xs text-white/50 uppercase tracking-widest block mb-1 font-mono">Vị trí Khung</label>
               <div className="flex liquid-glass-pill p-1 gap-1">
-                 <button onClick={() => setConfig(prev => ({...prev, frameLayering: 'above'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${(!config.frameLayering || config.frameLayering === 'above') ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Đè Lên Ảnh</button>
-                 <button onClick={() => setConfig(prev => ({...prev, frameLayering: 'below'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${config.frameLayering === 'below' ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Nằm Dưới Ảnh</button>
+                 <button onClick={() => setLocalConfig(prev => ({...prev, frameLayering: 'above'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${(!localConfig.frameLayering || localConfig.frameLayering === 'above') ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Đè Lên Ảnh</button>
+                 <button onClick={() => setLocalConfig(prev => ({...prev, frameLayering: 'below'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${localConfig.frameLayering === 'below' ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Nằm Dưới Ảnh</button>
               </div>
             </div>
          </div>
@@ -279,7 +359,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
       <div
         ref={scrollWrapperRef}
         className="w-full bg-black/40 rounded-2xl border border-white/10 overflow-auto"
-        style={{ maxHeight: '480px' }}
+        style={{ maxHeight: '520px' }}
       >
         {/* Zoom indicator */}
         <div className="sticky top-0 left-0 z-50 flex items-center justify-between px-3.5 py-2 liquid-glass border-b border-white/10">
@@ -301,22 +381,29 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
           <div
             ref={containerRef}
             className={`relative ${aspectClass} bg-white shadow-2xl rounded-sm select-none touch-none`}
-            style={{ width: `${(config.frameShape === 'square' ? 200 : 120) * zoomLevel}px`, flexShrink: 0 }}
+            style={{ width: `${(localConfig.frameShape === 'square' ? 280 : 180) * zoomLevel}px`, flexShrink: 0 }}
           >
             {/* Frame Image overlay — chỉ hiện ở đây khi frame nằm DƯỚI ảnh */}
-            {config.frameImage && config.frameLayering === 'below' && (
-              <img src={config.frameImage} className="absolute inset-0 w-full h-full object-fill z-0 pointer-events-none" alt="Frame Overlay" />
+            {localConfig.frameImage && localConfig.frameLayering === 'below' && (
+              <img 
+                src={localConfig.frameImage} 
+                className="absolute inset-0 w-full h-full object-fill z-0 pointer-events-none" 
+                alt="Frame Overlay" 
+                loading="eager"
+                decoding="async"
+              />
             )}
 
             {/* Photo Slots (On top of the frame) */}
             <div className="absolute inset-0 z-10 w-full h-full">
               {currentLayouts.map((layout, idx) => {
                  const isActive = effectiveSlotIdx === idx;
-                 const isCircle = config.photoShapes[idx] === 'circle';
+                 const isCircle = localConfig.photoShapes[idx] === 'circle';
                  const rotationAngle = layout.rotation || 0;
                  return (
                    <div
                      key={idx}
+                     ref={el => { slotRefs.current[idx] = el; }}
                      onPointerDown={(e) => {
                         e.stopPropagation();
                         setActiveSlotIdx(idx);
@@ -336,13 +423,20 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
                           initW: layout.width,
                           initH: layout.height,
                           initRotation: rotationAngle,
+                          currentX: layout.x,
+                          currentY: layout.y,
+                          currentW: layout.width,
+                          currentH: layout.height,
+                          currentRotation: rotationAngle,
                           centerX: 0,
                           centerY: 0,
                           rectW: rect.width || 1,
                           rectH: rect.height || 1,
+                          slotEl: slotRefs.current[idx],
+                          badgeEl: badgeRefs.current[idx],
                         };
                      }}
-                     className={`absolute cursor-move border-[2px] ${isActive ? 'border-cyan-400 bg-cyan-400/20 shadow-[0_0_15px_rgba(6,182,212,0.4)] z-30' : 'border-black/30 bg-black/10 hover:border-cyan-400/50 z-10'} ${isCircle ? 'rounded-full' : 'rounded-none'}`}
+                     className={`absolute cursor-move border-[2px] select-none ${isActive ? 'border-cyan-400 bg-cyan-400/20 shadow-[0_0_15px_rgba(6,182,212,0.4)] z-30' : 'border-black/30 bg-black/10 hover:border-cyan-400/50 z-10'} ${isCircle ? 'rounded-full' : 'rounded-none'}`}
                      style={{
                        left: `${layout.x}%`,
                        top: `${layout.y}%`,
@@ -350,17 +444,20 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
                        height: `${layout.height}%`,
                        transform: rotationAngle ? `rotate(${rotationAngle}deg)` : undefined,
                        transformOrigin: 'center center',
+                       touchAction: 'none',
                        willChange: isActive ? 'transform, left, top, width, height' : undefined,
                      }}
                    >
                       <div className="absolute inset-0 flex items-center justify-center text-black/40 font-black text-xl pointer-events-none select-none">{idx + 1}</div>
 
                       {/* Hiển thị góc xoay nếu có lệch */}
-                      {rotationAngle !== 0 && (
-                        <div className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-md bg-black/85 border border-cyan-400/60 text-cyan-300 font-mono text-[10px] font-bold shadow pointer-events-none whitespace-nowrap">
-                          {rotationAngle > 0 ? `+${rotationAngle}°` : `${rotationAngle}°`}
-                        </div>
-                      )}
+                      <div 
+                        ref={el => { badgeRefs.current[idx] = el; }}
+                        style={{ display: rotationAngle !== 0 ? 'block' : 'none' }}
+                        className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-md bg-black/85 border border-cyan-400/60 text-cyan-300 font-mono text-[10px] font-bold shadow pointer-events-none whitespace-nowrap z-30"
+                      >
+                        {rotationAngle > 0 ? `+${rotationAngle}°` : `${rotationAngle}°`}
+                      </div>
                       
                       {/* Active Controls */}
                       {isActive && (
@@ -385,10 +482,17 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
                                 initW: layout.width,
                                 initH: layout.height,
                                 initRotation: rotationAngle,
+                                currentX: layout.x,
+                                currentY: layout.y,
+                                currentW: layout.width,
+                                currentH: layout.height,
+                                currentRotation: rotationAngle,
                                 centerX: slotCenterX,
                                 centerY: slotCenterY,
                                 rectW: rect.width || 1,
                                 rectH: rect.height || 1,
+                                slotEl: slotRefs.current[idx],
+                                badgeEl: badgeRefs.current[idx],
                               };
                             }}
                             className="absolute -top-11 left-1/2 -translate-x-1/2 w-8 h-8 bg-gradient-to-tr from-cyan-400 to-indigo-600 border-2 border-white rounded-full flex items-center justify-center cursor-grab active:cursor-grabbing shadow-[0_0_15px_#22d3ee] z-50 hover:scale-125 transition-transform group"
@@ -436,10 +540,17 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
                                  initW: layout.width,
                                  initH: layout.height,
                                  initRotation: rotationAngle,
+                                 currentX: layout.x,
+                                 currentY: layout.y,
+                                 currentW: layout.width,
+                                 currentH: layout.height,
+                                 currentRotation: rotationAngle,
                                  centerX: 0,
                                  centerY: 0,
                                  rectW: rect.width || 1,
                                  rectH: rect.height || 1,
+                                 slotEl: slotRefs.current[idx],
+                                 badgeEl: badgeRefs.current[idx],
                                };
                             }}
                             className="absolute -right-2.5 -bottom-2.5 w-5 h-5 bg-cyan-400 border-2 border-black rounded-full cursor-nwse-resize shadow-[0_0_10px_#22d3ee] z-50 hover:scale-125 transition-transform"
@@ -453,11 +564,17 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
             </div>
 
             {/* Frame Image overlay — hiện ở đây khi frame ĐÈ LÊN ảnh (mặc định) */}
-            {config.frameImage && (!config.frameLayering || config.frameLayering === 'above') && (
-              <img src={config.frameImage} className="absolute inset-0 w-full h-full object-fill z-20 pointer-events-none" alt="Frame Overlay" />
+            {localConfig.frameImage && (!localConfig.frameLayering || localConfig.frameLayering === 'above') && (
+              <img 
+                src={localConfig.frameImage} 
+                className="absolute inset-0 w-full h-full object-fill z-20 pointer-events-none" 
+                alt="Frame Overlay" 
+                loading="eager"
+                decoding="async"
+              />
             )}
 
-            {(!config.frameImage && currentLayouts.length === 0) && (
+            {(!localConfig.frameImage && currentLayouts.length === 0) && (
                <div className="absolute inset-0 flex flex-col items-center justify-center text-black/30 text-xs p-4 text-center pointer-events-none font-medium z-30">
                   Kéo Frame của bạn vào đây hoặc tạo vùng ghép ảnh trước
                </div>
@@ -525,7 +642,10 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <span className="font-mono text-base font-black text-cyan-300 bg-cyan-950/80 px-3 py-1 rounded-xl border border-cyan-500/40 shadow-[0_0_10px_rgba(6,182,212,0.2)]">
+              <span 
+                ref={rotationDisplayRef}
+                className="font-mono text-base font-black text-cyan-300 bg-cyan-950/80 px-3 py-1 rounded-xl border border-cyan-500/40 shadow-[0_0_10px_rgba(6,182,212,0.2)]"
+              >
                 {(currentLayouts[effectiveSlotIdx].rotation || 0) > 0 ? `+${currentLayouts[effectiveSlotIdx].rotation || 0}°` : `${currentLayouts[effectiveSlotIdx].rotation || 0}°`}
               </span>
               <button
@@ -543,6 +663,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
             <span className="text-[10px] font-mono text-white/40 font-bold shrink-0">-45°</span>
             <div className="flex-1 relative flex items-center">
               <input
+                ref={rotationSliderRef}
                 type="range"
                 min="-45"
                 max="45"

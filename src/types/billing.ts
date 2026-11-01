@@ -20,6 +20,8 @@ export interface BillingSettings {
 
 export type PaymentMethod = 'cash' | 'transfer' | 'free';
 
+export type PaymentStatus = 'completed' | 'pending'; // 'completed': Đã nhận tiền, 'pending': Chưa nhận tiền
+
 export interface OrderTransaction {
   id: string; // VD: ORD-20261031-143000
   createdAt: number; // timestamp
@@ -34,6 +36,8 @@ export interface OrderTransaction {
   originalAmount: number; // Giá gốc trước giảm (VNĐ)
   discount: number; // Tiết kiệm (VNĐ)
   paymentMethod: PaymentMethod;
+  paymentStatus?: PaymentStatus; // Mặc định 'completed' cho tiền mặt/test, 'pending' cho chuyển khoản chưa đối soát
+  transferCode?: string; // Mã chuyển khoản ngắn gọn khách quét QR (VD: CG4821)
   note?: string;
 }
 
@@ -52,6 +56,10 @@ export interface ReconciliationSummary {
   cashOrdersCount: number;
   transferRevenue: number;
   transferOrdersCount: number;
+  transferPendingRevenue: number; // Tổng tiền chuyển khoản chưa nhận
+  transferPendingOrdersCount: number; // Số đơn chuyển khoản chưa nhận
+  transferCompletedRevenue: number; // Tổng tiền chuyển khoản đã nhận
+  transferCompletedOrdersCount: number; // Số đơn chuyển khoản đã nhận
   freeOrdersCount: number;
   totalFramesPrinted: number;
   estimatedA4Sheets: number;

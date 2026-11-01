@@ -34,6 +34,16 @@ export function CameraScreen() {
   const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasSavedCameraSessionRef = useRef(false);
 
+  const [paymentQrInfo, setPaymentQrInfo] = useState<{
+    show: boolean;
+    qrUrl?: string;
+    amount?: number;
+    transferCode?: string;
+    bankName?: string;
+    accountNumber?: string;
+    accountHolder?: string;
+  } | null>(null);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<BlobPart[]>([]);
   const [recordedVideoBlob, setRecordedVideoBlob] = useState<Blob | null>(null);
@@ -215,6 +225,7 @@ export function CameraScreen() {
     hasSavedCameraSessionRef.current = false;
     setCapturedImages([]);
     setRecordedVideoBlob(null);
+    setPaymentQrInfo(null);
     setCurrentShotIndex(0);
     setIsSessionActive(false);
     setCountdown(null);
@@ -343,6 +354,8 @@ export function CameraScreen() {
         actionsRef.current.triggerShot(delay);
       } else if (type === 'RESET_SESSION') {
         actionsRef.current.resetLocalSession();
+      } else if (type === 'PAYMENT_QR_SYNC' && payload) {
+        setPaymentQrInfo(payload);
       }
     });
 
@@ -464,8 +477,38 @@ export function CameraScreen() {
                       </div>
 
                       {finalImage && (
-                        <div className="flex justify-center w-full h-[62vh] relative">
-                          <img src={finalImage} className="h-full object-contain drop-shadow-[0_15px_35px_rgba(0,0,0,0.6)] rounded-2xl border border-white/20" alt="Final Strip" />
+                        <div className="flex flex-col md:flex-row items-center justify-center gap-8 w-full max-h-[62vh] relative">
+                          <div className="h-[58vh] flex items-center justify-center shrink-0">
+                            <img src={finalImage} className="h-full object-contain drop-shadow-[0_15px_35px_rgba(0,0,0,0.6)] rounded-2xl border border-white/20" alt="Final Strip" />
+                          </div>
+
+                          {/* VietQR Floating Card for Customer to Scan */}
+                          {paymentQrInfo?.show && paymentQrInfo?.qrUrl && (
+                            <div className="liquid-glass border-2 border-cyan-400/50 p-5 rounded-3xl flex flex-col items-center gap-3 shadow-[0_0_35px_rgba(6,182,212,0.35)] animate-fadeIn max-w-xs shrink-0">
+                              <span className="text-[11px] font-mono uppercase tracking-widest text-cyan-300 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-400/30 font-bold">
+                                📱 Quét Mã Thanh Toán
+                              </span>
+                              <div className="w-48 h-48 bg-white p-2.5 rounded-2xl flex items-center justify-center shadow-2xl border border-white/20">
+                                <img src={paymentQrInfo.qrUrl} alt="VietQR" className="w-full h-full object-contain" />
+                              </div>
+                              <div className="text-center font-mono">
+                                <div className="text-2xl font-black text-cyan-300 text-glow-cyan">
+                                  {paymentQrInfo.amount?.toLocaleString('vi-VN')} <span className="text-xs">VNĐ</span>
+                                </div>
+                                <div className="text-xs text-white/90 font-medium mt-1">
+                                  {paymentQrInfo.bankName}
+                                </div>
+                                <div className="text-[10px] text-slate-300 mt-0.5">
+                                  STK: <strong className="text-white">{paymentQrInfo.accountNumber}</strong> ({paymentQrInfo.accountHolder})
+                                </div>
+                                {paymentQrInfo.transferCode && (
+                                  <div className="text-xs text-amber-300 font-bold mt-1.5 bg-black/60 px-3 py-1 rounded-lg border border-amber-400/30">
+                                    Nội dung: {paymentQrInfo.transferCode}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                    </div>

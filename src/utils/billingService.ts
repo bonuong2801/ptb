@@ -1,4 +1,4 @@
-import { BillingSettings, OrderTransaction, ReconciliationSummary, TieredPricingConfig, BankConfig, PaymentMethod } from '../types/billing';
+import { BillingSettings, OrderTransaction, ReconciliationSummary, TieredPricingConfig, BankConfig, PaymentMethod, PaymentStatus } from '../types/billing';
 import { syncDB } from './frameRenderer';
 
 export const DEFAULT_PRICING: TieredPricingConfig = {
@@ -152,8 +152,11 @@ export const billingService = {
     const timeStr = now.toTimeString().split(' ')[0]; // HH:mm:ss
     const id = `ORD-${dateStr.replace(/-/g, '')}-${timeStr.replace(/:/g, '')}`;
 
+    const paymentStatus: PaymentStatus = order.paymentStatus || (order.paymentMethod === 'transfer' ? 'pending' : 'completed');
+
     const newOrder: OrderTransaction = {
       ...order,
+      paymentStatus,
       id,
       createdAt: now.getTime(),
       dateStr,
@@ -170,6 +173,11 @@ export const billingService = {
     }
 
     return newOrder;
+  },
+
+  // Cập nhật trạng thái thanh toán (Đã nhận / Chưa nhận)
+  async updatePaymentStatus(id: string, status: PaymentStatus): Promise<void> {
+    await this.updateOrder(id, { paymentStatus: status });
   },
 
   // Cập nhật phương thức hoặc thông tin đơn hàng
@@ -205,6 +213,10 @@ export const billingService = {
     let cashOrdersCount = 0;
     let transferRevenue = 0;
     let transferOrdersCount = 0;
+    let transferPendingRevenue = 0;
+    let transferPendingOrdersCount = 0;
+    let transferCompletedRevenue = 0;
+    let transferCompletedOrdersCount = 0;
     let freeOrdersCount = 0;
     let totalFramesPrinted = 0;
 
@@ -232,6 +244,14 @@ export const billingService = {
         transferRevenue += ord.totalAmount || 0;
         transferOrdersCount++;
         totalRevenue += ord.totalAmount || 0;
+
+        if (ord.paymentStatus === 'completed') {
+          transferCompletedRevenue += ord.totalAmount || 0;
+          transferCompletedOrdersCount++;
+        } else {
+          transferPendingRevenue += ord.totalAmount || 0;
+          transferPendingOrdersCount++;
+        }
       }
     }
 
@@ -254,6 +274,10 @@ export const billingService = {
       cashOrdersCount,
       transferRevenue,
       transferOrdersCount,
+      transferPendingRevenue,
+      transferPendingOrdersCount,
+      transferCompletedRevenue,
+      transferCompletedOrdersCount,
       freeOrdersCount,
       totalFramesPrinted,
       estimatedA4Sheets: Math.ceil(totalFramesPrinted / 4),
@@ -267,11 +291,13 @@ export const billingService = {
 
     const headers = [
       'Mã Đơn Hàng',
+      'Mã Chuyển Khoản',
       'Ngày',
       'Giờ',
       'Tên Frame',
       'Số Frame In',
       'Hình Thức Thanh Toán',
+      'Trạng Thái',
       'Giá Gốc (VNĐ)',
       'Tiết Kiệm (VNĐ)',
       'Thành Tiền (VNĐ)',
@@ -280,11 +306,13 @@ export const billingService = {
 
     const rows = list.map(o => [
       `"${o.id}"`,
+      `"${o.transferCode || ''}"`,
       `"${o.dateStr}"`,
       `"${o.timeStr}"`,
       `"${(o.frameName || 'Mặc định').replace(/"/g, '""')}"`,
       o.copies,
       o.paymentMethod === 'cash' ? 'Tiền mặt' : o.paymentMethod === 'transfer' ? 'Chuyển khoản' : 'Miễn phí',
+      o.paymentMethod === 'transfer' ? (o.paymentStatus === 'completed' ? 'Đã nhận' : 'Chưa nhận') : 'Đã thu',
       o.originalAmount || o.totalAmount,
       o.discount || 0,
       o.totalAmount,
@@ -299,7 +327,8 @@ export const billingService = {
       ['Tổng số frame in:', summary.totalFramesPrinted],
       ['Ước tính tiêu hao A4:', `${summary.estimatedA4Sheets} tờ`],
       ['TIỀN MẶT TRONG KÉT:', `${summary.cashRevenue.toLocaleString('vi-VN')} đ (${summary.cashOrdersCount} đơn)`],
-      ['CHUYỂN KHOẢN SAO KÊ:', `${summary.transferRevenue.toLocaleString('vi-VN')} đ (${summary.transferOrdersCount} đơn)`],
+      ['CHUYỂN KHOẢN ĐÃ NHẬN:', `${summary.transferCompletedRevenue.toLocaleString('vi-VN')} đ (${summary.transferCompletedOrdersCount} đơn)`],
+      ['CHUYỂN KHOẢN CHƯA NHẬN (CHỜ ĐỐI SOÁT):', `${summary.transferPendingRevenue.toLocaleString('vi-VN')} đ (${summary.transferPendingOrdersCount} đơn)`],
       ['TỔNG DOANH THU:', `${summary.totalRevenue.toLocaleString('vi-VN')} đ`],
       [],
       ['--- THỐNG KÊ SỐ LƯỢNG IN THEO TỪNG FRAME ---'],

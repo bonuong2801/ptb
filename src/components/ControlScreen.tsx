@@ -7,7 +7,7 @@ import { VisualFrameEditor, ScalablePreview } from './VisualFrameEditor';
 import { A4PrintArrangerModal } from './A4PrintArrangerModal';
 import { ReconciliationModal } from './ReconciliationModal';
 import { billingService, calculateTieredPrice, getVietQrUrl, DEFAULT_PRICING, DEFAULT_BANK } from '../utils/billingService';
-import { BillingSettings, PaymentMethod } from '../types/billing';
+import { BillingSettings, PaymentMethod, PaymentStatus } from '../types/billing';
 
 export function ControlScreen() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -347,7 +347,7 @@ export function ControlScreen() {
         }
       };
       
-      const timeout = setTimeout(broadcastAssets, isEditorOpen ? 250 : 80); // Debounce during rapid slot dragging
+      const timeout = setTimeout(broadcastAssets, isEditorOpen ? 500 : 80); // Debounce during rapid slot dragging
       return () => clearTimeout(timeout);
     }
   }, [customConfig, channel, syncRequest, isEditorOpen]);
@@ -494,6 +494,8 @@ export function ControlScreen() {
   const [todayRevenue, setTodayRevenue] = useState(0);
   const [todayOrdersCount, setTodayOrdersCount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const [currentTransferCode, setCurrentTransferCode] = useState<string>('');
+  const [transferPaymentStatus, setTransferPaymentStatus] = useState<PaymentStatus>('pending');
   const [orderNote, setOrderNote] = useState('');
   const [hasRecordedOrderForSession, setHasRecordedOrderForSession] = useState(false);
 
@@ -515,10 +517,14 @@ export function ControlScreen() {
     refreshTodayStats();
   }, []);
 
-  const recordCurrentOrder = async () => {
+  const recordCurrentOrder = async (statusOverride?: PaymentStatus) => {
     if (hasRecordedOrderForSession) return;
     try {
       const priceCalc = calculateTieredPrice(printCopies, billingSettings.pricing);
+      const finalStatus: PaymentStatus = statusOverride
+        ? statusOverride
+        : (paymentMethod === 'transfer' ? transferPaymentStatus : 'completed');
+
       await billingService.addOrder({
         sessionName: savedSessionRef.current || `Session_${Date.now()}`,
         frameId: customConfig.id,
@@ -529,6 +535,8 @@ export function ControlScreen() {
         originalAmount: priceCalc.original,
         discount: paymentMethod === 'free' ? priceCalc.original : priceCalc.discount,
         paymentMethod,
+        paymentStatus: finalStatus,
+        transferCode: paymentMethod === 'transfer' ? (currentTransferCode || 'CG' + Math.floor(1000 + Math.random() * 9000)) : undefined,
         note: orderNote,
       });
       setHasRecordedOrderForSession(true);
@@ -544,10 +552,50 @@ export function ControlScreen() {
       hasShownPrintModalRef.current = true;
       setIsPrintModalOpen(true);
       setPrintCopies(2); // Mặc định 2 bản in (cặp đôi)
+      const code = 'CG' + Math.floor(1000 + Math.random() * 9000);
+      setCurrentTransferCode(code);
+      setTransferPaymentStatus('pending');
     } else if (capturedImages.length === 0) {
       hasShownPrintModalRef.current = false;
     }
   }, [capturedImages.length, customConfig.totalShots, isSessionActive, isProcessing, finalImage]);
+
+  // Đồng bộ mã VietQR sang Customer Screen để khách quét tại quầy
+  useEffect(() => {
+    if (channel && cameraReady) {
+      if (isPrintModalOpen && paymentMethod === 'transfer' && finalImage) {
+        const priceCalc = calculateTieredPrice(printCopies, billingSettings.pricing);
+        const vietQrUrl = getVietQrUrl(
+          billingSettings.bank.bankId,
+          billingSettings.bank.accountNumber,
+          priceCalc.total,
+          currentTransferCode || `CGBOOTH ${printCopies}F`,
+          billingSettings.bank.accountHolder
+        );
+        try {
+          channel.postMessage({
+            type: 'PAYMENT_QR_SYNC',
+            payload: {
+              show: true,
+              qrUrl: vietQrUrl,
+              amount: priceCalc.total,
+              transferCode: currentTransferCode,
+              bankName: billingSettings.bank.bankName,
+              accountNumber: billingSettings.bank.accountNumber,
+              accountHolder: billingSettings.bank.accountHolder,
+            }
+          });
+        } catch (e) {}
+      } else {
+        try {
+          channel.postMessage({
+            type: 'PAYMENT_QR_SYNC',
+            payload: { show: false }
+          });
+        } catch (e) {}
+      }
+    }
+  }, [channel, cameraReady, isPrintModalOpen, paymentMethod, printCopies, finalImage, currentTransferCode, billingSettings]);
 
   const handlePrint = async () => {
     if (!selectedPrinter) {
@@ -1056,18 +1104,32 @@ export function ControlScreen() {
           billingSettings.bank.bankId,
           billingSettings.bank.accountNumber,
           displayTotal,
-          `CGBOOTH ${printCopies}F`,
+          currentTransferCode || `CGBOOTH ${printCopies}F`,
           billingSettings.bank.accountHolder
         );
 
         return (
           <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-zoom-in">
-            <div className="liquid-glass border border-cyan-400/30 p-6 rounded-3xl w-full max-w-lg max-h-[95vh] overflow-y-auto custom-scrollbar flex flex-col items-center gap-4 shadow-[0_25px_60px_rgba(0,0,0,0.8)]">
-              <div className="text-center">
-                <span className="text-[10px] font-mono uppercase tracking-widest text-cyan-300 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-400/20">
-                  Bước 1/2: Cấu Hình In & Tính Tiền
-                </span>
-                <h2 className="text-2xl font-black text-white uppercase tracking-wider mt-2">XÁC NHẬN IN & THANH TOÁN</h2>
+            <div className="liquid-glass border border-cyan-400/30 p-6 rounded-3xl w-full max-w-lg max-h-[95vh] overflow-y-auto custom-scrollbar flex flex-col items-center gap-4 shadow-[0_25px_60px_rgba(0,0,0,0.8)] relative">
+              {/* Header with Title and Close (X) button */}
+              <div className="flex items-center justify-between w-full">
+                <div className="text-left">
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-cyan-300 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-400/20">
+                    Bước 1/2: Cấu Hình In & Tính Tiền
+                  </span>
+                  <h2 className="text-xl font-black text-white uppercase tracking-wider mt-1.5">XÁC NHẬN IN & THANH TOÁN</h2>
+                </div>
+                <button
+                  onClick={async () => {
+                    await recordCurrentOrder(paymentMethod === 'transfer' ? transferPaymentStatus : 'completed');
+                    setIsPrintModalOpen(false);
+                    resetSession();
+                  }}
+                  className="p-2 text-white/50 hover:text-white rounded-xl liquid-glass-pill transition-colors cursor-pointer"
+                  title="Đóng đơn & Sang khách tiếp theo"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
               
               <div className="w-full bg-black/40 rounded-2xl p-3 flex justify-center border border-white/10 shadow-inner">
@@ -1173,16 +1235,60 @@ export function ControlScreen() {
 
               {/* Hộp VietQR nếu chọn Chuyển khoản */}
               {paymentMethod === 'transfer' && displayTotal > 0 && vietQrUrl && (
-                <div className="w-full flex flex-col items-center gap-2 p-3 rounded-2xl bg-white/5 border border-cyan-400/30 animate-fadeIn">
-                  <span className="text-xs font-bold text-cyan-300 uppercase tracking-wider flex items-center gap-1.5">
-                    <span>📱</span> Quét VietQR đúng số tiền: <strong className="text-white font-mono">{displayTotal.toLocaleString('vi-VN')} đ</strong>
-                  </span>
-                  <div className="w-40 h-40 bg-white p-2 rounded-xl flex items-center justify-center shadow-2xl">
+                <div className="w-full flex flex-col items-center gap-2.5 p-4 rounded-2xl bg-cyan-950/30 border border-cyan-400/40 animate-fadeIn shadow-[0_0_20px_rgba(6,182,212,0.15)]">
+                  <div className="flex items-center justify-between w-full">
+                    <span className="text-xs font-bold text-cyan-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>📱</span> Quét VietQR đúng số tiền
+                    </span>
+                    <span className="text-xs font-mono font-bold text-amber-300 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-400/30">
+                      Nội dung: {currentTransferCode}
+                    </span>
+                  </div>
+
+                  <div className="w-48 h-48 bg-white p-2.5 rounded-2xl flex items-center justify-center shadow-2xl border-2 border-cyan-400/50">
                     <img src={vietQrUrl} alt="VietQR" className="w-full h-full object-contain" />
                   </div>
-                  <p className="text-[11px] text-slate-400 text-center font-mono">
-                    {billingSettings.bank.bankName} • STK: {billingSettings.bank.accountNumber} ({billingSettings.bank.accountHolder})
-                  </p>
+
+                  <div className="text-center font-mono w-full bg-black/40 p-2.5 rounded-xl border border-white/5 flex flex-col gap-0.5">
+                    <div className="text-white font-bold text-xs sm:text-sm">
+                      {billingSettings.bank.bankName}
+                    </div>
+                    <div className="text-cyan-300 text-xs">
+                      STK: <strong className="select-all text-white font-mono">{billingSettings.bank.accountNumber}</strong> ({billingSettings.bank.accountHolder})
+                    </div>
+                    <div className="text-amber-300 font-bold text-xs mt-1">
+                      Nội dung CK: <strong className="select-all text-white bg-black/60 px-2 py-0.5 rounded font-mono">{currentTransferCode}</strong>
+                    </div>
+                  </div>
+
+                  {/* Trạng thái thanh toán của đơn này */}
+                  <div className="flex items-center justify-between w-full pt-2 border-t border-white/10">
+                    <span className="text-xs text-slate-300 font-medium">Trạng thái ghi nhận:</span>
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setTransferPaymentStatus('pending')}
+                        className={`px-3 py-1 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                          transferPaymentStatus === 'pending'
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-400/50 shadow-[0_0_10px_rgba(245,158,11,0.3)]'
+                            : 'text-slate-400 hover:text-white border border-white/10'
+                        }`}
+                      >
+                        ⏳ Chưa nhận tiền
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTransferPaymentStatus('completed')}
+                        className={`px-3 py-1 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                          transferPaymentStatus === 'completed'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/50 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                            : 'text-slate-400 hover:text-white border border-white/10'
+                        }`}
+                      >
+                        ✓ Đã nhận tiền
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1202,24 +1308,30 @@ export function ControlScreen() {
                 </button>
 
                 {/* Các tùy chọn phụ */}
-                <div className="flex gap-2.5 w-full">
-                  <button 
-                    onClick={() => setIsPrintModalOpen(false)} 
-                    className="flex-1 liquid-glass-pill text-white/70 hover:text-white py-3 rounded-xl font-bold tracking-wider transition-all uppercase text-xs cursor-pointer"
-                  >
-                    Bỏ qua
-                  </button>
-                  
+                <div className="grid grid-cols-2 gap-2.5 w-full">
                   <button 
                     onClick={async () => {
                       await recordCurrentOrder();
                       handlePrint();
                     }} 
-                    className="flex-1 liquid-glass-pill text-cyan-300 hover:text-white hover:border-cyan-400/40 py-3 rounded-xl font-bold tracking-wider transition-all uppercase text-xs cursor-pointer flex items-center justify-center gap-1.5"
+                    className="liquid-glass-pill text-cyan-300 hover:text-white hover:border-cyan-400/40 py-3 rounded-xl font-bold tracking-wider transition-all uppercase text-xs cursor-pointer flex items-center justify-center gap-1.5"
                     title="In trực tiếp nếu dùng máy in nhiệt chuyên dụng 5x15cm"
                   >
                     <Printer className="w-3.5 h-3.5" />
                     <span>In Khổ Gốc (5x15)</span>
+                  </button>
+
+                  <button 
+                    onClick={async () => {
+                      await recordCurrentOrder(paymentMethod === 'transfer' ? transferPaymentStatus : 'completed');
+                      setIsPrintModalOpen(false);
+                      resetSession();
+                    }} 
+                    className="liquid-btn-reset text-white py-3 rounded-xl font-bold tracking-wider transition-all uppercase text-xs cursor-pointer flex items-center justify-center gap-1.5"
+                    title="Đóng đơn & Sang khách tiếp theo ngay lập tức"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Khách Tiếp Theo</span>
                   </button>
                 </div>
               </div>

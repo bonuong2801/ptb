@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Download, Settings, Trash2, Calendar, DollarSign, Wallet, CreditCard, Printer, CheckCircle2, RefreshCw } from 'lucide-react';
-import { OrderTransaction, BillingSettings, PaymentMethod } from '../types/billing';
+import { OrderTransaction, BillingSettings, PaymentMethod, PaymentStatus } from '../types/billing';
 import { billingService, POPULAR_BANKS, DEFAULT_PRICING, DEFAULT_BANK } from '../utils/billingService';
 
 interface ReconciliationModalProps {
@@ -80,6 +80,13 @@ export const ReconciliationModal: React.FC<ReconciliationModalProps> = ({
       paymentMethod: newMethod,
       totalAmount: newTotal,
     });
+    await loadData();
+    onOrderChanged?.();
+  };
+
+  const handleTogglePaymentStatus = async (orderId: string, currentStatus?: PaymentStatus) => {
+    const nextStatus: PaymentStatus = currentStatus === 'completed' ? 'pending' : 'completed';
+    await billingService.updatePaymentStatus(orderId, nextStatus);
     await loadData();
     onOrderChanged?.();
   };
@@ -219,8 +226,15 @@ export const ReconciliationModal: React.FC<ReconciliationModalProps> = ({
                 <div className="text-3xl font-black text-blue-300">
                   {summary.transferRevenue.toLocaleString('vi-VN')} <span className="text-sm font-bold">đ</span>
                 </div>
-                <div className="text-xs text-slate-400 mt-1">
-                  Khớp sao kê <strong>{summary.transferOrdersCount} đơn VietQR</strong>
+                <div className="text-xs text-slate-400 mt-2 flex flex-col gap-1 border-t border-white/10 pt-2 font-mono">
+                  <div className="flex items-center justify-between text-emerald-400">
+                    <span>✓ Đã nhận:</span>
+                    <strong className="font-bold">{summary.transferCompletedRevenue.toLocaleString('vi-VN')} đ ({summary.transferCompletedOrdersCount} đơn)</strong>
+                  </div>
+                  <div className={`flex items-center justify-between ${summary.transferPendingOrdersCount > 0 ? 'text-amber-300 font-bold' : 'text-slate-500'}`}>
+                    <span>⏳ Chưa nhận:</span>
+                    <strong>{summary.transferPendingRevenue.toLocaleString('vi-VN')} đ ({summary.transferPendingOrdersCount} đơn)</strong>
+                  </div>
                 </div>
               </div>
             </div>
@@ -321,6 +335,7 @@ export const ReconciliationModal: React.FC<ReconciliationModalProps> = ({
                       <th className="py-2.5 px-3">Khung Chụp</th>
                       <th className="py-2.5 px-3 text-center">Số Frame</th>
                       <th className="py-2.5 px-3">Hình Thức</th>
+                      <th className="py-2.5 px-3 text-center">Trạng Thái Tiền</th>
                       <th className="py-2.5 px-3 text-right">Thành Tiền (VNĐ)</th>
                       <th className="py-2.5 px-3 text-center">Thao Tác</th>
                     </tr>
@@ -328,9 +343,16 @@ export const ReconciliationModal: React.FC<ReconciliationModalProps> = ({
                   <tbody className="divide-y divide-white/5 font-medium">
                     {filteredOrders.map(ord => (
                       <tr key={ord.id} className="hover:bg-white/[0.03] transition-colors">
-                        <td className="py-2.5 px-3 font-mono text-cyan-300 font-bold">{ord.id}</td>
+                        <td className="py-2.5 px-3 font-mono">
+                          <div className="text-cyan-300 font-bold">{ord.id}</div>
+                          {ord.transferCode && (
+                            <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded bg-cyan-950/80 text-cyan-300 text-[10px] font-bold border border-cyan-400/40">
+                              CK: {ord.transferCode}
+                            </span>
+                          )}
+                        </td>
                         <td className="py-2.5 px-3 text-slate-300 font-mono">{ord.timeStr}</td>
-                        <td className="py-2.5 px-3 text-white max-w-[160px] truncate" title={ord.frameName}>
+                        <td className="py-2.5 px-3 text-white max-w-[150px] truncate" title={ord.frameName}>
                           {ord.frameName || 'Mặc định'}
                         </td>
                         <td className="py-2.5 px-3 text-center">
@@ -354,6 +376,29 @@ export const ReconciliationModal: React.FC<ReconciliationModalProps> = ({
                             <option value="transfer" className="bg-slate-900 text-blue-300">💳 Chuyển khoản</option>
                             <option value="free" className="bg-slate-900 text-slate-400">🏷️ Miễn phí / Test</option>
                           </select>
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {ord.paymentMethod === 'transfer' ? (
+                            <button
+                              onClick={() => handleTogglePaymentStatus(ord.id, ord.paymentStatus)}
+                              className={`px-3 py-1 rounded-full text-[11px] font-bold transition-all cursor-pointer inline-flex items-center gap-1 active:scale-95 shadow-sm ${
+                                ord.paymentStatus === 'completed'
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/50 hover:bg-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+                                  : 'bg-amber-500/20 text-amber-300 border border-amber-400/50 hover:bg-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.2)] animate-pulse'
+                              }`}
+                              title="Bấm để đổi trạng thái Đã nhận / Chưa nhận"
+                            >
+                              <span>{ord.paymentStatus === 'completed' ? '✓ Đã nhận' : '⏳ Chưa nhận'}</span>
+                            </button>
+                          ) : ord.paymentMethod === 'cash' ? (
+                            <span className="text-[11px] font-medium text-emerald-400/80 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 inline-block">
+                              ✓ Đã thu
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-medium text-slate-500 inline-block">
+                              Miễn phí
+                            </span>
+                          )}
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono font-bold text-white text-sm">
                           {ord.totalAmount.toLocaleString('vi-VN')} đ

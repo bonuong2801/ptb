@@ -40,17 +40,24 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
   const [isPrinting, setIsPrinting] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const stripRefs = useRef<{ [id: string]: HTMLDivElement | null }>({});
   const dragRef = useRef<{
     id: string;
     startX: number;
     startY: number;
     initX: number;
     initY: number;
+    currentX: number;
+    currentY: number;
     stripW: number;
     stripH: number;
     rectW: number;
     rectH: number;
+    stripEl: HTMLDivElement | null;
   } | null>(null);
+
+  const rafRef = useRef<number | null>(null);
+  const latestPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
 
   // Kích thước thật của dải ảnh trên khổ A4 (tính bằng % toạ độ)
   // A4 Portrait: 210 x 297 mm. Dải 50 x 150 mm.
@@ -116,28 +123,53 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
     }
   }, [initialCopies]);
 
-  // Xử lý sự kiện kéo thả (Drag & Drop) mượt mà với Pointer Events
+  // Xử lý sự kiện kéo thả (Drag & Drop) mượt mà với Direct DOM Update & RAF
   useEffect(() => {
     const handlePointerMove = (e: PointerEvent) => {
       if (!dragRef.current) return;
-      const { id, startX, startY, initX, initY, stripW, stripH, rectW, rectH } = dragRef.current;
-      const dx = ((e.clientX - startX) / rectW) * 100;
-      const dy = ((e.clientY - startY) / rectH) * 100;
+      latestPointerRef.current = { clientX: e.clientX, clientY: e.clientY };
 
-      const nextX = Math.round(Math.max(0, Math.min(100 - stripW, initX + dx)) * 10) / 10;
-      const nextY = Math.round(Math.max(0, Math.min(100 - stripH, initY + dy)) * 10) / 10;
+      if (rafRef.current !== null) return;
 
-      setStrips(prev => prev.map(s => s.id === id ? { ...s, x: nextX, y: nextY } : s));
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        if (!dragRef.current || !latestPointerRef.current) return;
+        const drag = dragRef.current;
+        const { clientX, clientY } = latestPointerRef.current;
+
+        const dx = ((clientX - drag.startX) / drag.rectW) * 100;
+        const dy = ((clientY - drag.startY) / drag.rectH) * 100;
+
+        const nextX = Math.round(Math.max(0, Math.min(100 - drag.stripW, drag.initX + dx)) * 10) / 10;
+        const nextY = Math.round(Math.max(0, Math.min(100 - drag.stripH, drag.initY + dy)) * 10) / 10;
+
+        drag.currentX = nextX;
+        drag.currentY = nextY;
+        if (drag.stripEl) {
+          drag.stripEl.style.left = `${nextX}%`;
+          drag.stripEl.style.top = `${nextY}%`;
+        }
+      });
     };
 
     const handlePointerUp = () => {
-      dragRef.current = null;
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      if (dragRef.current) {
+        const { id, currentX, currentY } = dragRef.current;
+        dragRef.current = null;
+        latestPointerRef.current = null;
+        setStrips(prev => prev.map(s => s.id === id ? { ...s, x: currentX, y: currentY } : s));
+      }
     };
 
-    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointermove', handlePointerMove, { passive: true });
     window.addEventListener('pointerup', handlePointerUp);
     window.addEventListener('pointercancel', handlePointerUp);
     return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerUp);
@@ -366,6 +398,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                 return (
                   <div
                     key={strip.id}
+                    ref={el => { stripRefs.current[strip.id] = el; }}
                     onPointerDown={(e) => {
                       const tgt = e.target as HTMLElement;
                       if (tgt && tgt.closest && tgt.closest('button')) {
@@ -381,10 +414,13 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                         startY: e.clientY,
                         initX: strip.x,
                         initY: strip.y,
+                        currentX: strip.x,
+                        currentY: strip.y,
                         stripW: dims.w,
                         stripH: dims.h,
                         rectW: rect.width || 1,
                         rectH: rect.height || 1,
+                        stripEl: stripRefs.current[strip.id],
                       };
                     }}
                     style={{
