@@ -38,23 +38,40 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
   const [activeStripId, setActiveStripId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
-  const [rotatedFinalImage, setRotatedFinalImage] = useState<string | null>(null);
+  const [previewFinalImage, setPreviewFinalImage] = useState<string | null>(null);
+  const [previewRotatedFinalImage, setPreviewRotatedFinalImage] = useState<string | null>(null);
 
-  // Tạo trước ảnh xoay 90 độ chuẩn qua Canvas để khi xoay dải ảnh không bị cắt xén viền Frame
+  // Tạo bộ nhớ đệm preview siêu nhẹ (~30KB) để canvas tương tác đạt 60-120 FPS
   useEffect(() => {
     if (!finalImage) return;
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
+      // 1. Thumbnail đứng tối ưu màn hình (max 600px, dung lượng ~30KB)
+      const maxDim = 600;
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const thumbW = Math.round(img.width * scale);
+      const thumbH = Math.round(img.height * scale);
+
       const canvas = document.createElement('canvas');
-      canvas.width = img.height;
-      canvas.height = img.width;
+      canvas.width = thumbW;
+      canvas.height = thumbH;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate((90 * Math.PI) / 180);
-        ctx.drawImage(img, -img.width / 2, -img.height / 2);
-        setRotatedFinalImage(canvas.toDataURL('image/jpeg', 0.95));
+        ctx.drawImage(img, 0, 0, thumbW, thumbH);
+        setPreviewFinalImage(canvas.toDataURL('image/jpeg', 0.85));
+      }
+
+      // 2. Thumbnail xoay 90 độ siêu nhẹ (~30KB)
+      const rotCanvas = document.createElement('canvas');
+      rotCanvas.width = thumbH;
+      rotCanvas.height = thumbW;
+      const rotCtx = rotCanvas.getContext('2d');
+      if (rotCtx) {
+        rotCtx.translate(rotCanvas.width / 2, rotCanvas.height / 2);
+        rotCtx.rotate((90 * Math.PI) / 180);
+        rotCtx.drawImage(img, -thumbW / 2, -thumbH / 2, thumbW, thumbH);
+        setPreviewRotatedFinalImage(rotCanvas.toDataURL('image/jpeg', 0.85));
       }
     };
     img.src = finalImage;
@@ -144,7 +161,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
     }
   }, [initialCopies]);
 
-  // Xử lý sự kiện kéo thả (Drag & Drop) mượt mà với Direct DOM Update & RAF
+  // Xử lý sự kiện kéo thả (Drag & Drop) siêu tốc 60-120 FPS qua GPU translate3d
   useEffect(() => {
     const handlePointerMove = (e: PointerEvent) => {
       if (!dragRef.current) return;
@@ -158,17 +175,23 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
         const drag = dragRef.current;
         const { clientX, clientY } = latestPointerRef.current;
 
-        const dx = ((clientX - drag.startX) / drag.rectW) * 100;
-        const dy = ((clientY - drag.startY) / drag.rectH) * 100;
+        const dx_px = clientX - drag.startX;
+        const dy_px = clientY - drag.startY;
 
-        const nextX = Math.round(Math.max(0, Math.min(100 - drag.stripW, drag.initX + dx)) * 10) / 10;
-        const nextY = Math.round(Math.max(0, Math.min(100 - drag.stripH, drag.initY + dy)) * 10) / 10;
+        const dx_pct = (dx_px / drag.rectW) * 100;
+        const dy_pct = (dy_px / drag.rectH) * 100;
+
+        const nextX = Math.round(Math.max(0, Math.min(100 - drag.stripW, drag.initX + dx_pct)) * 10) / 10;
+        const nextY = Math.round(Math.max(0, Math.min(100 - drag.stripH, drag.initY + dy_pct)) * 10) / 10;
 
         drag.currentX = nextX;
         drag.currentY = nextY;
+
+        // Tăng tốc phần cứng GPU thuần túy: Không reflow, không layout recalculation
         if (drag.stripEl) {
-          drag.stripEl.style.left = `${nextX}%`;
-          drag.stripEl.style.top = `${nextY}%`;
+          const clamped_dx_px = ((nextX - drag.initX) / 100) * drag.rectW;
+          const clamped_dy_px = ((nextY - drag.initY) / 100) * drag.rectH;
+          drag.stripEl.style.transform = `translate3d(${clamped_dx_px}px, ${clamped_dy_px}px, 0)`;
         }
       });
     };
@@ -179,7 +202,12 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
         rafRef.current = null;
       }
       if (dragRef.current) {
-        const { id, currentX, currentY } = dragRef.current;
+        const { id, currentX, currentY, stripEl } = dragRef.current;
+        if (stripEl) {
+          stripEl.style.left = `${currentX}%`;
+          stripEl.style.top = `${currentY}%`;
+          stripEl.style.transform = '';
+        }
         dragRef.current = null;
         latestPointerRef.current = null;
         setStrips(prev => prev.map(s => s.id === id ? { ...s, x: currentX, y: currentY } : s));
@@ -338,7 +366,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
             <button
               onClick={handleDownloadA4}
               disabled={isGenerating}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl liquid-glass-pill hover:border-cyan-400/40 text-cyan-300 hover:text-white transition-all text-xs font-bold cursor-pointer"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#161e31] hover:bg-[#1f2a44] border border-white/15 hover:border-cyan-400/40 text-cyan-300 hover:text-white transition-all text-xs font-bold cursor-pointer"
               title="Tải ảnh A4 nét cao để lưu hoặc gửi in tiệm"
             >
               <Download className="w-4 h-4" />
@@ -374,7 +402,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
             <div className="absolute top-3 right-6 z-20 flex items-center gap-2">
               <button
                 onClick={rotatePaper90}
-                className="px-3.5 py-1.5 rounded-xl liquid-glass border border-cyan-400/40 text-cyan-300 hover:text-white hover:bg-cyan-500/20 text-xs font-bold flex items-center gap-1.5 transition-all shadow-lg cursor-pointer active:scale-95"
+                className="px-3.5 py-1.5 rounded-xl bg-[#161e31] hover:bg-[#1f2a44] border border-cyan-400/40 text-cyan-300 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-lg cursor-pointer active:scale-95"
                 title="Mỗi lần ấn xoay giấy 90 độ (Đứng ⇄ Ngang)"
               >
                 <RotateCw className="w-3.5 h-3.5" />
@@ -383,7 +411,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
 
               <button
                 onClick={rotateAllStrips90}
-                className="px-3 py-1.5 rounded-xl liquid-glass border border-white/15 text-white/70 hover:text-white hover:bg-white/10 text-xs font-bold flex items-center gap-1.5 transition-all shadow-lg cursor-pointer active:scale-95"
+                className="px-3.5 py-1.5 rounded-xl bg-[#161e31] hover:bg-[#1f2a44] border border-white/15 text-white/70 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-lg cursor-pointer active:scale-95"
                 title="Xoay 90 độ tất cả dải ảnh trên trang"
               >
                 <RotateCw className="w-3.5 h-3.5" />
@@ -394,11 +422,13 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
             {/* Khung mô phỏng tờ giấy A4 thật */}
             <div 
               ref={containerRef}
-              className={`relative bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-md border-2 border-white/80 select-none overflow-hidden transition-all duration-300 ${paperAspectClass}`}
+              className={`relative bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-md border-2 border-white/80 select-none overflow-hidden ${paperAspectClass}`}
               style={{
                 maxHeight: '100%',
                 maxWidth: '100%',
-                height: isPortrait ? '92%' : '82%'
+                height: isPortrait ? '92%' : '82%',
+                contain: 'layout style',
+                transform: 'translateZ(0)'
               }}
             >
               {/* Vạch lưới mờ hướng dẫn canh lề (Subtle Grid) */}
@@ -449,9 +479,10 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                       top: `${strip.y}%`,
                       width: `${dims.w}%`,
                       height: `${dims.h}%`,
-                      touchAction: 'none'
+                      touchAction: 'none',
+                      willChange: isSelected ? 'transform' : undefined,
                     }}
-                    className={`absolute cursor-grab active:cursor-grabbing transition-shadow group ${
+                    className={`absolute cursor-grab active:cursor-grabbing group ${
                       isSelected 
                         ? 'ring-2 ring-cyan-500 shadow-[0_10px_25px_rgba(6,182,212,0.4)] z-30' 
                         : 'hover:ring-1 hover:ring-cyan-400/60 z-20 shadow-md'
@@ -460,7 +491,10 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                     {/* Ảnh dải thật với đầy đủ Frame kể cả khi xoay 90 độ */}
                     <div className="w-full h-full relative overflow-hidden bg-white">
                       <img 
-                        src={isRotated ? (rotatedFinalImage || finalImage) : finalImage} 
+                        src={isRotated ? (previewRotatedFinalImage || finalImage) : (previewFinalImage || finalImage)}
+                        loading="eager"
+                        decoding="async"
+                        style={{ transform: 'translateZ(0)', contain: 'strict' }} 
                         alt={`Strip ${idx + 1}`}
                         className="w-full h-full object-fill pointer-events-none select-none"
                       />
@@ -530,7 +564,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                 <div className="grid grid-cols-2 gap-2.5">
                   <button
                     onClick={() => applyPreset('2-strip-portrait')}
-                    className="p-3 rounded-xl text-left liquid-glass-interactive border border-white/10 hover:border-cyan-400/50 transition-all cursor-pointer group"
+                    className="p-3 rounded-xl text-left bg-[#161e31] hover:bg-[#1f2a44] border border-white/10 hover:border-cyan-400/50 transition-all cursor-pointer group"
                   >
                     <div className="text-xs font-bold text-white group-hover:text-cyan-300">2 Dải Đứng (Cặp đôi)</div>
                     <div className="text-[10px] text-white/50 mt-0.5">A4 Dọc • 2 dải ở giữa</div>
@@ -538,7 +572,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
 
                   <button
                     onClick={() => applyPreset('4-strip-landscape')}
-                    className="p-3 rounded-xl text-left liquid-glass-interactive border border-white/10 hover:border-cyan-400/50 transition-all cursor-pointer group"
+                    className="p-3 rounded-xl text-left bg-[#161e31] hover:bg-[#1f2a44] border border-white/10 hover:border-cyan-400/50 transition-all cursor-pointer group"
                   >
                     <div className="text-xs font-bold text-white group-hover:text-cyan-300">4 Dải Đứng (A4 Ngang)</div>
                     <div className="text-[10px] text-white/50 mt-0.5">A4 Ngang • 4 dải đứng</div>
@@ -554,7 +588,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                 </label>
 
                 {/* Hướng giấy */}
-                <div className="flex items-center justify-between liquid-glass p-3 rounded-xl border border-white/10">
+                <div className="flex items-center justify-between bg-[#111726] p-3 rounded-xl border border-white/10">
                   <div>
                     <span className="text-xs text-white/80 block">Khổ giấy A4:</span>
                     <span className="text-[10px] text-cyan-400 font-mono font-bold">
@@ -580,7 +614,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                 </div>
 
                 {/* Số lượng dải ảnh trên trang */}
-                <div className="flex items-center justify-between liquid-glass p-3 rounded-xl border border-white/10">
+                <div className="flex items-center justify-between bg-[#111726] p-3 rounded-xl border border-white/10">
                   <div>
                     <span className="text-xs text-white/80 block">Số dải ảnh trên tờ A4:</span>
                     <span className="text-[10px] text-white/40">In {strips.length} dải / 1 tờ A4</span>
@@ -589,7 +623,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                     <button
                       onClick={() => removeStrip(strips[strips.length - 1]?.id)}
                       disabled={strips.length <= 1}
-                      className="w-8 h-8 rounded-lg liquid-glass-pill hover:border-cyan-400/40 text-cyan-300 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center font-bold text-base cursor-pointer"
+                      className="w-8 h-8 rounded-lg bg-[#161e31] hover:bg-[#1f2a44] border border-white/15 hover:border-cyan-400/40 text-cyan-300 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center font-bold text-base cursor-pointer"
                     >
                       -
                     </button>
@@ -597,7 +631,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                     <button
                       onClick={addStrip}
                       disabled={strips.length >= 8}
-                      className="w-8 h-8 rounded-lg liquid-glass-pill hover:border-cyan-400/40 text-cyan-300 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center font-bold text-base cursor-pointer"
+                      className="w-8 h-8 rounded-lg bg-[#161e31] hover:bg-[#1f2a44] border border-white/15 hover:border-cyan-400/40 text-cyan-300 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center font-bold text-base cursor-pointer"
                     >
                       +
                     </button>
@@ -605,7 +639,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                 </div>
 
                 {/* Bật tắt nét đứt cắt kéo */}
-                <label className="flex items-center justify-between liquid-glass p-3 rounded-xl border border-white/10 cursor-pointer">
+                <label className="flex items-center justify-between bg-[#111726] p-3 rounded-xl border border-white/10 cursor-pointer">
                   <span className="text-xs text-white/80 flex items-center gap-2">
                     <Scissors className="w-4 h-4 text-cyan-400" />
                     Đường nét đứt hướng dẫn cắt kéo
@@ -641,7 +675,7 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
 
               <button
                 onClick={onClose}
-                className="w-full py-2.5 rounded-xl liquid-glass-pill text-white/60 hover:text-white text-xs font-bold tracking-wider uppercase transition-colors cursor-pointer"
+                className="w-full py-2.5 rounded-xl bg-[#161e31] hover:bg-[#1f2a44] border border-white/15 text-white/60 hover:text-white text-xs font-bold tracking-wider uppercase transition-colors cursor-pointer"
               >
                 Hủy / Đóng lại
               </button>
