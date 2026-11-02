@@ -70,16 +70,35 @@ export const ScalablePreview = React.memo(function ScalablePreview({ config, cap
   );
 });
 
-export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameConfig, setConfig: React.Dispatch<React.SetStateAction<CustomFrameConfig>> }) {
+export function VisualFrameEditor({ 
+  config, 
+  setConfig,
+  saveRef 
+}: { 
+  config: CustomFrameConfig; 
+  setConfig: React.Dispatch<React.SetStateAction<CustomFrameConfig>>;
+  saveRef?: React.MutableRefObject<(() => CustomFrameConfig) | null>;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeSlotIdx, setActiveSlotIdx] = useState<number>(0);
 
   // LOCAL STATE ISOLATION: Trạng thái cục bộ độc lập hoàn toàn với ControlScreen
   const [localConfig, setLocalConfig] = useState<CustomFrameConfig>(config);
   const lastSyncedIdRef = useRef(config.id);
-  const isInitialMount = useRef(true);
   const localConfigRef = useRef(localConfig);
   localConfigRef.current = localConfig;
+
+  // Cung cấp hàm lấy dữ liệu mới nhất cho nút Lưu của ControlScreen
+  useEffect(() => {
+    if (saveRef) {
+      saveRef.current = () => localConfigRef.current;
+    }
+    return () => {
+      if (saveRef) {
+        saveRef.current = null;
+      }
+    };
+  }, [saveRef]);
 
   // Đồng bộ từ ngoài vào chỉ khi ID của frame thay đổi (chọn frame khác từ danh sách)
   useEffect(() => {
@@ -88,18 +107,6 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
       setLocalConfig(config);
     }
   }, [config]);
-
-  // Debounced Sync (300ms) ngầm về ControlScreen mà không làm khựng hay lag giao diện
-  useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-    const timer = setTimeout(() => {
-      setConfig(localConfig);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [localConfig, setConfig]);
 
   // Đảm bảo dữ liệu mới nhất luôn được commit về ControlScreen khi đóng modal
   useEffect(() => {
@@ -158,15 +165,27 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
         const dy = ((clientY - drag.startY) / drag.rectH) * 100;
 
         if (drag.type === 'drag') {
-          const nextX = Math.round(Math.max(0, Math.min(100 - drag.initW, drag.initX + dx)) * 10) / 10;
-          const nextY = Math.round(Math.max(0, Math.min(100 - drag.initH, drag.initY + dy)) * 10) / 10;
+          const dx_px = clientX - drag.startX;
+          const dy_px = clientY - drag.startY;
+
+          const dx_pct = (dx_px / drag.rectW) * 100;
+          const dy_pct = (dy_px / drag.rectH) * 100;
+
+          const nextX = Math.round(Math.max(0, Math.min(100 - drag.initW, drag.initX + dx_pct)) * 10) / 10;
+          const nextY = Math.round(Math.max(0, Math.min(100 - drag.initH, drag.initY + dy_pct)) * 10) / 10;
+
           drag.currentX = nextX;
           drag.currentY = nextY;
+
+          // Pure Hardware Accelerated GPU Translate: Zero Reflow, Zero Layout Recalculation
           if (drag.slotEl) {
-            drag.slotEl.style.left = `${nextX}%`;
-            drag.slotEl.style.top = `${nextY}%`;
+            const clamped_dx_px = ((nextX - drag.initX) / 100) * drag.rectW;
+            const clamped_dy_px = ((nextY - drag.initY) / 100) * drag.rectH;
+            drag.slotEl.style.transform = `translate3d(${clamped_dx_px}px, ${clamped_dy_px}px, 0) rotate(${drag.initRotation}deg)`;
           }
         } else if (drag.type === 'resize') {
+          const dx = ((clientX - drag.startX) / drag.rectW) * 100;
+          const dy = ((clientY - drag.startY) / drag.rectH) * 100;
           const nextW = Math.round(Math.max(5, Math.min(100 - drag.initX, drag.initW + dx)) * 10) / 10;
           const nextH = Math.round(Math.max(5, Math.min(100 - drag.initY, drag.initH + dy)) * 10) / 10;
           drag.currentW = nextW;
@@ -206,7 +225,17 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
         rafRef.current = null;
       }
       if (dragRef.current) {
-        const { idx, currentX, currentY, currentW, currentH, currentRotation } = dragRef.current;
+        const { idx, currentX, currentY, currentW, currentH, currentRotation, slotEl, type } = dragRef.current;
+        
+        // Hoàn tất cử chỉ: commit toạ độ và reset transform về rotate thuần túy
+        if (slotEl) {
+          if (type === 'drag') {
+            slotEl.style.left = `${currentX}%`;
+            slotEl.style.top = `${currentY}%`;
+            slotEl.style.transform = currentRotation ? `rotate(${currentRotation}deg)` : '';
+          }
+        }
+
         dragRef.current = null;
         latestPointerRef.current = null;
 
@@ -322,11 +351,11 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
 
   return (
     <div className="w-full flex flex-col gap-4">
-      <div className="flex justify-between items-center liquid-glass p-3.5 rounded-2xl border border-white/10">
+      <div className="flex justify-between items-center bg-[#111726] p-3.5 rounded-2xl border border-white/10 shadow-lg">
          <div>
             <label className="text-xs text-white/50 uppercase tracking-widest block mb-1 font-mono">Khung ảnh (Frame PNG)</label>
             <div className="flex items-center gap-2">
-               <label className="flex items-center gap-2 cursor-pointer liquid-glass-pill hover:border-cyan-400/40 px-3.5 py-1.5 rounded-full text-sm transition-all">
+               <label className="flex items-center gap-2 cursor-pointer bg-[#161e31] hover:bg-[#1f2a44] border border-white/15 hover:border-cyan-400/40 px-3.5 py-1.5 rounded-full text-sm transition-all">
                   <Upload className="w-4 h-4 text-cyan-400" />
                   <span className="text-white/90 text-xs font-medium">{localConfig.frameImage ? 'Đổi Frame' : 'Tải Frame lên'}</span>
                   <input type="file" accept="image/png" onChange={handleFileUpload} className="hidden" />
@@ -339,7 +368,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
          <div className="flex flex-col items-end gap-2">
             <div>
               <label className="text-xs text-white/50 uppercase tracking-widest block mb-1 font-mono">Tỉ Lệ Khung</label>
-              <div className="flex liquid-glass-pill p-1 gap-1">
+              <div className="flex bg-[#161e31] border border-white/10 rounded-full p-1 gap-1">
                  <button onClick={() => setLocalConfig(prev => ({...prev, frameShape: 'rectangle'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${localConfig.frameShape === 'rectangle' ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Chữ Nhật</button>
                  <button onClick={() => setLocalConfig(prev => ({...prev, frameShape: 'square'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${localConfig.frameShape === 'square' ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Vuông</button>
               </div>
@@ -347,7 +376,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
             
             <div>
               <label className="text-xs text-white/50 uppercase tracking-widest block mb-1 font-mono">Vị trí Khung</label>
-              <div className="flex liquid-glass-pill p-1 gap-1">
+              <div className="flex bg-[#161e31] border border-white/10 rounded-full p-1 gap-1">
                  <button onClick={() => setLocalConfig(prev => ({...prev, frameLayering: 'above'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${(!localConfig.frameLayering || localConfig.frameLayering === 'above') ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Đè Lên Ảnh</button>
                  <button onClick={() => setLocalConfig(prev => ({...prev, frameLayering: 'below'}))} className={`px-2.5 py-1 text-[10px] font-bold rounded-full transition-all ${localConfig.frameLayering === 'below' ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]' : 'text-white/50 hover:text-white'}`}>Nằm Dưới Ảnh</button>
               </div>
@@ -362,14 +391,14 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
         style={{ maxHeight: '520px' }}
       >
         {/* Zoom indicator */}
-        <div className="sticky top-0 left-0 z-50 flex items-center justify-between px-3.5 py-2 liquid-glass border-b border-white/10">
+        <div className="sticky top-0 left-0 z-50 flex items-center justify-between px-3.5 py-2 bg-[#0d121f] border-b border-white/10">
           <span className="text-[10px] text-white/50 uppercase tracking-widest font-mono">Ctrl + cuộn chuột để zoom</span>
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-mono text-cyan-400 font-bold">{Math.round(zoomLevel * 100)}%</span>
             {zoomLevel !== 1 && (
               <button
                 onClick={() => setZoomLevel(1)}
-                className="text-[10px] text-white/60 hover:text-white px-2 py-0.5 rounded-full liquid-glass-pill transition-colors"
+                className="text-[10px] text-white/60 hover:text-white px-2 py-0.5 rounded-full bg-[#161e31] hover:bg-[#1f2a44] border border-white/10 transition-colors"
               >
                 Reset
               </button>
@@ -391,6 +420,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
                 alt="Frame Overlay" 
                 loading="eager"
                 decoding="async"
+                style={{ transform: 'translateZ(0)', contain: 'strict' }}
               />
             )}
 
@@ -445,7 +475,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
                        transform: rotationAngle ? `rotate(${rotationAngle}deg)` : undefined,
                        transformOrigin: 'center center',
                        touchAction: 'none',
-                       willChange: isActive ? 'transform, left, top, width, height' : undefined,
+                       willChange: isActive ? 'transform' : undefined,
                      }}
                    >
                       <div className="absolute inset-0 flex items-center justify-center text-black/40 font-black text-xl pointer-events-none select-none">{idx + 1}</div>
@@ -503,7 +533,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
 
                           {/* Action Bar (ở mép dưới cùng để không che nút xoay) */}
                           <div
-                            className="absolute -bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/95 backdrop-blur-md rounded-full px-2.5 py-1 z-50 whitespace-nowrap border border-white/20 shadow-xl"
+                            className="absolute -bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-[#0a0e1a] rounded-full px-2.5 py-1 z-50 whitespace-nowrap border border-cyan-500/40 shadow-xl"
                             onPointerDown={(e) => e.stopPropagation()}
                           >
                              <button
@@ -571,6 +601,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
                 alt="Frame Overlay" 
                 loading="eager"
                 decoding="async"
+                style={{ transform: 'translateZ(0)', contain: 'strict' }}
               />
             )}
 
@@ -585,7 +616,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
 
       {/* Danh sách các ô ảnh (Slot Selector Tabs) */}
       {currentLayouts.length > 0 && (
-        <div className="w-full liquid-glass rounded-2xl p-3 border border-white/10 flex flex-col gap-2">
+        <div className="w-full bg-[#111726] rounded-2xl p-3 border border-white/10 flex flex-col gap-2 shadow-lg">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold uppercase tracking-wider text-white/70">
               Danh Sách Ô Ảnh ({currentLayouts.length} ô) — Bấm để chọn & xoay:
@@ -605,7 +636,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
                   className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
                     isSel
                       ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-[0_0_15px_rgba(6,182,212,0.4)] border border-cyan-300/50 scale-[1.02]'
-                      : 'liquid-glass text-white/70 hover:text-white border border-white/10 hover:border-cyan-400/30'
+                      : 'bg-[#161e31] hover:bg-[#1f2a44] text-white/70 hover:text-white border border-white/10 hover:border-cyan-400/30'
                   }`}
                 >
                   <span>Ô #{i + 1}</span>
@@ -627,7 +658,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
 
       {/* Bảng Điều Khiển Xoay Ảnh (Luôn hiện cho ô đang chọn) */}
       {effectiveSlotIdx !== null && currentLayouts[effectiveSlotIdx] && (
-        <div className="w-full liquid-glass rounded-2xl p-4 border-2 border-cyan-400/40 flex flex-col gap-3 shadow-[0_4px_24px_rgba(6,182,212,0.18)]">
+        <div className="w-full bg-[#111726] rounded-2xl p-4 border-2 border-cyan-400/40 flex flex-col gap-3 shadow-[0_4px_24px_rgba(6,182,212,0.18)]">
           {/* Tiêu đề & Trạng thái góc hiện tại */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -650,7 +681,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
               </span>
               <button
                 onClick={() => updateRotation(effectiveSlotIdx, 0)}
-                className="text-[11px] text-white/80 hover:text-white px-2.5 py-1 rounded-xl liquid-glass-pill transition-colors font-bold border border-white/15 cursor-pointer"
+                className="text-[11px] text-white/80 hover:text-white px-2.5 py-1 rounded-xl bg-[#161e31] hover:bg-[#1f2a44] transition-colors font-bold border border-white/15 cursor-pointer"
                 title="Đặt góc về 0° thẳng đứng"
               >
                 ↺ 0° Thẳng
@@ -669,7 +700,22 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
                 max="45"
                 step="0.5"
                 value={currentLayouts[effectiveSlotIdx].rotation || 0}
-                onChange={(e) => updateRotation(effectiveSlotIdx, parseFloat(e.target.value))}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value);
+                  if (rotationDisplayRef.current) {
+                    rotationDisplayRef.current.textContent = val > 0 ? `+${val}°` : `${val}°`;
+                  }
+                  const el = slotRefs.current[effectiveSlotIdx];
+                  if (el) {
+                    el.style.transform = `rotate(${val}deg)`;
+                  }
+                  const badge = badgeRefs.current[effectiveSlotIdx];
+                  if (badge) {
+                    badge.textContent = val > 0 ? `+${val}°` : `${val}°`;
+                    badge.style.display = val === 0 ? 'none' : 'block';
+                  }
+                  updateRotation(effectiveSlotIdx, val);
+                }}
                 className="w-full accent-cyan-400 cursor-pointer h-2 bg-white/15 rounded-lg appearance-none shadow-inner"
               />
             </div>
@@ -681,28 +727,28 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
             <div className="flex items-center gap-1">
               <button
                 onClick={() => updateRotation(effectiveSlotIdx, (currentLayouts[effectiveSlotIdx].rotation || 0) - 15)}
-                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 liquid-glass-pill rounded-lg transition-colors border border-white/10 cursor-pointer"
+                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 bg-[#161e31] hover:bg-[#1f2a44] rounded-lg transition-colors border border-white/10 cursor-pointer"
                 title="Nghiêng trái 15 độ"
               >
                 -15°
               </button>
               <button
                 onClick={() => updateRotation(effectiveSlotIdx, (currentLayouts[effectiveSlotIdx].rotation || 0) - 5)}
-                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 liquid-glass-pill rounded-lg transition-colors border border-white/10 cursor-pointer"
+                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 bg-[#161e31] hover:bg-[#1f2a44] rounded-lg transition-colors border border-white/10 cursor-pointer"
                 title="Nghiêng trái 5 độ"
               >
                 -5°
               </button>
               <button
                 onClick={() => updateRotation(effectiveSlotIdx, (currentLayouts[effectiveSlotIdx].rotation || 0) - 1)}
-                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 liquid-glass-pill rounded-lg transition-colors border border-white/10 cursor-pointer"
+                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 bg-[#161e31] hover:bg-[#1f2a44] rounded-lg transition-colors border border-white/10 cursor-pointer"
                 title="Nghiêng trái 1 độ"
               >
                 -1°
               </button>
               <button
                 onClick={() => updateRotation(effectiveSlotIdx, (currentLayouts[effectiveSlotIdx].rotation || 0) - 0.5)}
-                className="px-1.5 py-1 text-[10px] font-mono font-bold text-white/80 hover:text-cyan-300 liquid-glass-pill rounded-lg transition-colors border border-white/10 cursor-pointer"
+                className="px-1.5 py-1 text-[10px] font-mono font-bold text-white/80 hover:text-cyan-300 bg-[#161e31] hover:bg-[#1f2a44] rounded-lg transition-colors border border-white/10 cursor-pointer"
                 title="Vi chỉnh trái 0.5 độ"
               >
                 -0.5°
@@ -714,7 +760,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
               className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                 (currentLayouts[effectiveSlotIdx].rotation || 0) === 0
                   ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 shadow-[0_0_8px_rgba(6,182,212,0.2)]'
-                  : 'liquid-glass-pill text-white/70 hover:text-white border border-white/10'
+                  : 'bg-[#161e31] hover:bg-[#1f2a44] text-white/70 hover:text-white border border-white/10'
               }`}
             >
               0° Chuẩn
@@ -723,28 +769,28 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
             <div className="flex items-center gap-1">
               <button
                 onClick={() => updateRotation(effectiveSlotIdx, (currentLayouts[effectiveSlotIdx].rotation || 0) + 0.5)}
-                className="px-1.5 py-1 text-[10px] font-mono font-bold text-white/80 hover:text-cyan-300 liquid-glass-pill rounded-lg transition-colors border border-white/10 cursor-pointer"
+                className="px-1.5 py-1 text-[10px] font-mono font-bold text-white/80 hover:text-cyan-300 bg-[#161e31] hover:bg-[#1f2a44] rounded-lg transition-colors border border-white/10 cursor-pointer"
                 title="Vi chỉnh phải 0.5 độ"
               >
                 +0.5°
               </button>
               <button
                 onClick={() => updateRotation(effectiveSlotIdx, (currentLayouts[effectiveSlotIdx].rotation || 0) + 1)}
-                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 liquid-glass-pill rounded-lg transition-colors border border-white/10 cursor-pointer"
+                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 bg-[#161e31] hover:bg-[#1f2a44] rounded-lg transition-colors border border-white/10 cursor-pointer"
                 title="Nghiêng phải 1 độ"
               >
                 +1°
               </button>
               <button
                 onClick={() => updateRotation(effectiveSlotIdx, (currentLayouts[effectiveSlotIdx].rotation || 0) + 5)}
-                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 liquid-glass-pill rounded-lg transition-colors border border-white/10 cursor-pointer"
+                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 bg-[#161e31] hover:bg-[#1f2a44] rounded-lg transition-colors border border-white/10 cursor-pointer"
                 title="Nghiêng phải 5 độ"
               >
                 +5°
               </button>
               <button
                 onClick={() => updateRotation(effectiveSlotIdx, (currentLayouts[effectiveSlotIdx].rotation || 0) + 15)}
-                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 liquid-glass-pill rounded-lg transition-colors border border-white/10 cursor-pointer"
+                className="px-2 py-1 text-[11px] font-mono font-bold text-white/80 hover:text-cyan-300 bg-[#161e31] hover:bg-[#1f2a44] rounded-lg transition-colors border border-white/10 cursor-pointer"
                 title="Nghiêng phải 15 độ"
               >
                 +15°
@@ -762,7 +808,7 @@ export function VisualFrameEditor({ config, setConfig }: { config: CustomFrameCo
         </div>
       )}
 
-      <button onClick={addSlot} className="w-full py-3 liquid-glass-interactive text-cyan-300 hover:text-white font-bold rounded-2xl text-sm border border-cyan-400/30 hover:border-cyan-400 transition-all shadow-[0_0_20px_rgba(6,182,212,0.15)] cursor-pointer">
+      <button onClick={addSlot} className="w-full py-3 bg-[#131c31] hover:bg-[#18233d] text-cyan-300 hover:text-white font-bold rounded-2xl text-sm border border-cyan-400/30 hover:border-cyan-400 transition-all shadow-[0_0_20px_rgba(6,182,212,0.15)] cursor-pointer">
          + Thêm Vùng Ghép Ảnh
       </button>
     </div>

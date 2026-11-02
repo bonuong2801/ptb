@@ -76,16 +76,19 @@ export function ControlScreen() {
 
   // App State is now Mastered here
   const [customConfig, setCustomConfig] = useState<CustomFrameConfig>(savedFrames[0]);
+  const editorSaveRef = useRef<(() => CustomFrameConfig) | null>(null);
   
-  const saveCurrentFrame = () => {
+  const saveCurrentFrame = (targetConfig?: CustomFrameConfig) => {
+    const configToSave = targetConfig || (editorSaveRef.current ? editorSaveRef.current() : customConfig);
+    setCustomConfig(configToSave);
     setSavedFrames(prev => {
-      const exists = prev.findIndex(f => f.id === customConfig.id);
+      const exists = prev.findIndex(f => f.id === configToSave.id);
       if (exists !== -1) {
          const newArr = [...prev];
-         newArr[exists] = customConfig;
+         newArr[exists] = configToSave;
          return newArr;
       }
-      return [...prev, customConfig];
+      return [...prev, configToSave];
     });
   };
 
@@ -129,6 +132,7 @@ export function ControlScreen() {
   const hasSavedCurrentSessionRef = useRef(false);
   
   useEffect(() => {
+    if (isEditorOpen) return; // Tránh tính toán canvas nặng khi đang cấu hình frame
     if (capturedImages.length === customConfig.totalShots && capturedImages.length > 0 && !isProcessing) {
       generateFinalImage(customConfig, capturedImages).then(async data => {
         setFinalImage(data);
@@ -487,6 +491,16 @@ export function ControlScreen() {
   const [isA4ArrangerOpen, setIsA4ArrangerOpen] = useState(false);
   const [printCopies, setPrintCopies] = useState(2);
   const hasShownPrintModalRef = useRef(false);
+
+  // Khi mở Visual Frame Editor hoặc Dàn trang A4, tạm dừng video để nhường toàn bộ GPU cho thao tác kéo thả
+  useEffect(() => {
+    if (!videoRef.current) return;
+    if (isEditorOpen || isA4ArrangerOpen || isPrintModalOpen) {
+      try { videoRef.current.pause(); } catch (_) {}
+    } else {
+      try { videoRef.current.play(); } catch (_) {}
+    }
+  }, [isEditorOpen, isA4ArrangerOpen, isPrintModalOpen]);
 
   // ─── Sổ Thu Chi & Quản Lý Doanh Thu ───
   const [isReconciliationOpen, setIsReconciliationOpen] = useState(false);
@@ -1075,22 +1089,22 @@ export function ControlScreen() {
 
       {/* Editor Modal Overlay */}
       {isEditorOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-zoom-in">
-          <div animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="liquid-glass border border-white/20 p-6 rounded-3xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col gap-6 shadow-[0_25px_60px_rgba(0,0,0,0.7)]">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#06080f]/95 p-4 animate-zoom-in">
+          <div className="bg-[#0c101d] border border-cyan-500/30 p-6 rounded-3xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col gap-6 shadow-[0_25px_60px_rgba(0,0,0,0.85)]">
               <div className="flex justify-between items-center border-b border-white/10 pb-4 shrink-0">
                 <h2 className="text-xl font-black text-cyan-400 uppercase tracking-widest">Visual Frame Editor</h2>
                 <div className="flex items-center gap-3">
-                   <input type="text" value={customConfig.name} onChange={e => setCustomConfig(prev => ({...prev, name: e.target.value}))} className="liquid-glass border border-white/15 rounded-xl px-3.5 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-400 w-48" placeholder="Tên Frame..." />
-                   <button onClick={saveCurrentFrame} className="liquid-btn-cyber text-xs uppercase px-4 py-2 cursor-pointer">Lưu</button>
-                   <button onClick={createNewFrame} className="liquid-glass-pill text-white/80 hover:text-white font-bold text-xs uppercase px-4 py-2 hover:border-cyan-400/40 transition-all cursor-pointer">Mới</button>
+                   <input type="text" value={customConfig.name} onChange={e => setCustomConfig(prev => ({...prev, name: e.target.value}))} className="bg-[#121829] border border-white/15 rounded-xl px-3.5 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-400 w-48" placeholder="Tên Frame..." />
+                   <button onClick={() => saveCurrentFrame()} className="liquid-btn-cyber text-xs uppercase px-4 py-2 cursor-pointer">Lưu</button>
+                   <button onClick={createNewFrame} className="bg-[#161e31] hover:bg-[#1f2a44] text-white/80 hover:text-white font-bold text-xs uppercase px-4 py-2 rounded-full border border-white/15 hover:border-cyan-400/40 transition-all cursor-pointer">Mới</button>
                    <div className="w-px h-6 bg-white/20 mx-1"></div>
-                   <button onClick={() => { saveCurrentFrame(); setIsEditorOpen(false); }} className="liquid-glass-pill text-white/60 hover:text-white transition-all p-2 cursor-pointer hover:border-white/30" title="Đóng và lưu">
+                   <button onClick={() => { saveCurrentFrame(); setIsEditorOpen(false); }} className="bg-[#161e31] hover:bg-[#1f2a44] text-white/60 hover:text-white transition-all p-2 rounded-full border border-white/15 hover:border-white/30 cursor-pointer" title="Đóng và lưu">
                       <X className="w-4 h-4" />
                    </button>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar min-h-[400px]">
-                 <VisualFrameEditor config={customConfig} setConfig={setCustomConfig} />
+                 <VisualFrameEditor config={customConfig} setConfig={setCustomConfig} saveRef={editorSaveRef} />
               </div>
             </div>
         </div>

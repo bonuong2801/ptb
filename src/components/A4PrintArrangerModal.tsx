@@ -291,8 +291,8 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
   const paperAspectClass = isPortrait ? 'aspect-[210/297]' : 'aspect-[297/210]';
 
   return (
-    <div className="fixed inset-0 z-[220] flex items-center justify-center bg-black/85 backdrop-blur-lg p-3 sm:p-6 animate-zoom-in">
-      <div className="liquid-glass border border-white/20 rounded-3xl w-full max-w-6xl h-[94vh] flex flex-col shadow-[0_30px_90px_rgba(0,0,0,0.85)] overflow-hidden">
+    <div className="fixed inset-0 z-[220] flex items-center justify-center bg-[#06080f]/95 p-3 sm:p-6 animate-zoom-in">
+      <div className="bg-[#0c101d] border border-cyan-500/30 rounded-3xl w-full max-w-6xl h-[94vh] flex flex-col shadow-[0_30px_90px_rgba(0,0,0,0.85)] overflow-hidden">
         
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0 bg-white/5">
