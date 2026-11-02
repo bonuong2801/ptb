@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, RefreshCw, ExternalLink, LayoutDashboard, Trash2, X, Scissors, Printer, FileText, DollarSign, Wallet, CreditCard } from 'lucide-react';
+import { Camera, RefreshCw, ExternalLink, LayoutDashboard, Trash2, X, Scissors, Printer, FileText, DollarSign, Wallet, CreditCard, QrCode } from 'lucide-react';
 import { CustomFrameConfig, CHANNEL_NAME } from '../types/booth';
 import { SyncService } from '../utils/syncService';
 import { generateFinalImage, syncDB } from '../utils/frameRenderer';
@@ -433,6 +433,7 @@ export function ControlScreen() {
   };
 
   const handleTriggerShot = () => {
+    if (manualShowScreen2Qr) setManualShowScreen2Qr(false);
     if (isProcessing) return;
     if (capturedImages.length >= customConfig.totalShots) return;
     if (countdown !== null) return;
@@ -510,6 +511,7 @@ export function ControlScreen() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [currentTransferCode, setCurrentTransferCode] = useState<string>('');
   const [transferPaymentStatus, setTransferPaymentStatus] = useState<PaymentStatus>('pending');
+  const [manualShowScreen2Qr, setManualShowScreen2Qr] = useState(false);
   const [orderNote, setOrderNote] = useState('');
   const [hasRecordedOrderForSession, setHasRecordedOrderForSession] = useState(false);
 
@@ -577,13 +579,20 @@ export function ControlScreen() {
   // Đồng bộ mã VietQR sang Customer Screen để khách quét tại quầy
   useEffect(() => {
     if (channel && cameraReady) {
-      if (isPrintModalOpen && paymentMethod === 'transfer' && finalImage) {
-        const priceCalc = calculateTieredPrice(printCopies, billingSettings.pricing);
+      const shouldShowQr = manualShowScreen2Qr || (isPrintModalOpen && paymentMethod === 'transfer');
+      if (shouldShowQr) {
+        const copiesToUse = printCopies > 0 ? printCopies : 2;
+        const priceCalc = calculateTieredPrice(copiesToUse, billingSettings.pricing);
+        const displayTotal = paymentMethod === 'free' ? 0 : priceCalc.total;
+        const code = currentTransferCode || ('CG' + Math.floor(1000 + Math.random() * 9000));
+        if (!currentTransferCode) {
+          setCurrentTransferCode(code);
+        }
         const vietQrUrl = getVietQrUrl(
           billingSettings.bank.bankId,
           billingSettings.bank.accountNumber,
-          priceCalc.total,
-          currentTransferCode || `CGBOOTH ${printCopies}F`,
+          displayTotal,
+          code,
           billingSettings.bank.accountHolder
         );
         try {
@@ -592,8 +601,8 @@ export function ControlScreen() {
             payload: {
               show: true,
               qrUrl: vietQrUrl,
-              amount: priceCalc.total,
-              transferCode: currentTransferCode,
+              amount: displayTotal,
+              transferCode: code,
               bankName: billingSettings.bank.bankName,
               accountNumber: billingSettings.bank.accountNumber,
               accountHolder: billingSettings.bank.accountHolder,
@@ -609,7 +618,7 @@ export function ControlScreen() {
         } catch (e) {}
       }
     }
-  }, [channel, cameraReady, isPrintModalOpen, paymentMethod, printCopies, finalImage, currentTransferCode, billingSettings]);
+  }, [channel, cameraReady, manualShowScreen2Qr, isPrintModalOpen, paymentMethod, printCopies, currentTransferCode, billingSettings]);
 
   const handlePrint = async () => {
     if (!selectedPrinter) {
@@ -737,6 +746,24 @@ export function ControlScreen() {
         </div>
 
         <div className="flex items-center gap-3">
+          <button 
+            onClick={() => {
+              if (!manualShowScreen2Qr && !currentTransferCode) {
+                setCurrentTransferCode('CG' + Math.floor(1000 + Math.random() * 9000));
+              }
+              setManualShowScreen2Qr(prev => !prev);
+            }}
+            className={`liquid-glass-pill text-xs font-bold uppercase tracking-wider px-3.5 py-2 transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+              manualShowScreen2Qr 
+                ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.4)]' 
+                : 'hover:border-cyan-400/50 hover:shadow-[0_0_15px_rgba(6,182,212,0.25)] text-slate-300 hover:text-white'
+            }`}
+            title="Chiếu mã VietQR sang Màn hình 2 cho khách quét bất kỳ lúc nào"
+          >
+            <QrCode className="w-3.5 h-3.5 text-cyan-400" />
+            <span>{manualShowScreen2Qr ? 'Ẩn QR Màn 2' : '📱 Hiện QR Màn 2'}</span>
+          </button>
+
           <button 
             onClick={() => setIsReconciliationOpen(true)}
             className="liquid-glass-pill text-xs font-bold uppercase tracking-wider text-cyan-300 hover:text-white px-3.5 py-2 hover:border-cyan-400/50 hover:shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all flex items-center gap-2 cursor-pointer active:scale-95"
@@ -1250,6 +1277,20 @@ export function ControlScreen() {
               {/* Hộp VietQR nếu chọn Chuyển khoản */}
               {paymentMethod === 'transfer' && displayTotal > 0 && vietQrUrl && (
                 <div className="w-full flex flex-col items-center gap-2.5 p-4 rounded-2xl bg-cyan-950/30 border border-cyan-400/40 animate-fadeIn shadow-[0_0_20px_rgba(6,182,212,0.15)]">
+                  {/* Status broadcast to Screen 2 */}
+                  <div className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-xs text-cyan-300">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                      <span>Màn hình 2: <strong>Đang chiếu mã VietQR cho khách</strong></span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setManualShowScreen2Qr(prev => !prev)}
+                      className="px-2.5 py-0.5 rounded bg-cyan-400/20 hover:bg-cyan-400/30 text-[11px] font-mono font-bold cursor-pointer transition-all text-white"
+                    >
+                      {manualShowScreen2Qr || (isPrintModalOpen && paymentMethod === 'transfer') ? 'Tắt chiếu' : 'Bật lại'}
+                    </button>
+                  </div>
                   <div className="flex items-center justify-between w-full">
                     <span className="text-xs font-bold text-cyan-300 uppercase tracking-wider flex items-center gap-1.5">
                       <span>📱</span> Quét VietQR đúng số tiền
@@ -1292,7 +1333,13 @@ export function ControlScreen() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setTransferPaymentStatus('completed')}
+                        onClick={() => {
+                          setTransferPaymentStatus('completed');
+                          if (channel && cameraReady) {
+                            channel.postMessage({ type: 'PAYMENT_SUCCESS' });
+                          }
+                          setManualShowScreen2Qr(false);
+                        }}
                         className={`px-3 py-1 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                           transferPaymentStatus === 'completed'
                             ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/50 shadow-[0_0_10px_rgba(16,185,129,0.3)]'

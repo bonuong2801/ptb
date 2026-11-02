@@ -43,6 +43,7 @@ export function CameraScreen() {
     accountNumber?: string;
     accountHolder?: string;
   } | null>(null);
+  const [showPaymentSuccess, setShowPaymentSuccess] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<BlobPart[]>([]);
@@ -226,6 +227,7 @@ export function CameraScreen() {
     setCapturedImages([]);
     setRecordedVideoBlob(null);
     setPaymentQrInfo(null);
+    setShowPaymentSuccess(false);
     setCurrentShotIndex(0);
     setIsSessionActive(false);
     setCountdown(null);
@@ -481,34 +483,6 @@ export function CameraScreen() {
                           <div className="h-[58vh] flex items-center justify-center shrink-0">
                             <img src={finalImage} className="h-full object-contain drop-shadow-[0_15px_35px_rgba(0,0,0,0.6)] rounded-2xl border border-white/20" alt="Final Strip" />
                           </div>
-
-                          {/* VietQR Floating Card for Customer to Scan */}
-                          {paymentQrInfo?.show && paymentQrInfo?.qrUrl && (
-                            <div className="liquid-glass border-2 border-cyan-400/50 p-5 rounded-3xl flex flex-col items-center gap-3 shadow-[0_0_35px_rgba(6,182,212,0.35)] animate-fadeIn max-w-xs shrink-0">
-                              <span className="text-[11px] font-mono uppercase tracking-widest text-cyan-300 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-400/30 font-bold">
-                                📱 Quét Mã Thanh Toán
-                              </span>
-                              <div className="w-48 h-48 bg-white p-2.5 rounded-2xl flex items-center justify-center shadow-2xl border border-white/20">
-                                <img src={paymentQrInfo.qrUrl} alt="VietQR" className="w-full h-full object-contain" />
-                              </div>
-                              <div className="text-center font-mono">
-                                <div className="text-2xl font-black text-cyan-300 text-glow-cyan">
-                                  {paymentQrInfo.amount?.toLocaleString('vi-VN')} <span className="text-xs">VNĐ</span>
-                                </div>
-                                <div className="text-xs text-white/90 font-medium mt-1">
-                                  {paymentQrInfo.bankName}
-                                </div>
-                                <div className="text-[10px] text-slate-300 mt-0.5">
-                                  STK: <strong className="text-white">{paymentQrInfo.accountNumber}</strong> ({paymentQrInfo.accountHolder})
-                                </div>
-                                {paymentQrInfo.transferCode && (
-                                  <div className="text-xs text-amber-300 font-bold mt-1.5 bg-black/60 px-3 py-1 rounded-lg border border-amber-400/30">
-                                    Nội dung: {paymentQrInfo.transferCode}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
                         </div>
                       )}
                    </div>
@@ -536,6 +510,69 @@ export function CameraScreen() {
            <ScalablePreview config={customConfig} capturedImages={capturedImages} />
          </div>
       </div>
+
+      {/* Standalone Fullscreen High-contrast Payment VietQR Overlay for Customer Screen */}
+      {paymentQrInfo?.show && paymentQrInfo?.qrUrl && (
+        <div className="fixed inset-0 z-[100] bg-[#06080f]/95 flex items-center justify-center p-6 animate-zoom-in backdrop-blur-md">
+          <div className="bg-[#0c101d] border-2 border-cyan-400/50 rounded-3xl p-8 sm:p-10 max-w-lg w-full flex flex-col items-center gap-6 shadow-[0_0_60px_rgba(6,182,212,0.35)] relative overflow-hidden">
+            {/* Ambient radar glows */}
+            <div className="absolute -top-24 -left-24 w-52 h-52 bg-cyan-500/15 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute -bottom-24 -right-24 w-52 h-52 bg-indigo-500/15 rounded-full blur-3xl pointer-events-none" />
+
+            {/* Title Badge */}
+            <div className="flex items-center gap-2.5 px-5 py-2 rounded-full bg-cyan-500/15 border border-cyan-400/40 text-cyan-300 font-mono text-xs uppercase tracking-widest font-bold shadow-[0_0_15px_rgba(6,182,212,0.2)]">
+              <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+              📱 QUÉT MÃ THANH TOÁN CHUYỂN KHOẢN
+            </div>
+
+            {/* High-Contrast QR Code Card with Scanner Laser Line */}
+            <div className="relative p-4 bg-white rounded-3xl shadow-2xl border-4 border-cyan-400/60 overflow-hidden">
+              <img src={paymentQrInfo.qrUrl} alt="VietQR" className="w-64 h-64 sm:w-72 sm:h-72 object-contain block select-none" />
+              <div className="absolute inset-x-4 top-4 h-1.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent animate-scan-line pointer-events-none shadow-[0_0_10px_#22d3ee]" />
+            </div>
+
+            {/* Price & Bank Details */}
+            <div className="text-center font-mono w-full flex flex-col items-center gap-1">
+              <div className="text-4xl sm:text-5xl font-black text-cyan-300 text-glow-cyan">
+                {paymentQrInfo.amount?.toLocaleString('vi-VN')} <span className="text-xl sm:text-2xl font-bold">VNĐ</span>
+              </div>
+              <div className="text-base sm:text-lg text-white font-bold mt-1 tracking-wide">
+                {paymentQrInfo.bankName}
+              </div>
+              <div className="text-sm text-cyan-100/80">
+                STK: <strong className="text-white text-base select-all font-mono font-bold tracking-wider">{paymentQrInfo.accountNumber}</strong> ({paymentQrInfo.accountHolder})
+              </div>
+              {paymentQrInfo.transferCode && (
+                <div className="mt-2.5 inline-block bg-amber-500/15 border border-amber-400/50 text-amber-300 px-5 py-2 rounded-xl text-sm font-bold font-mono shadow-[0_0_15px_rgba(245,158,11,0.25)]">
+                  Nội dung CK: <strong className="text-white select-all">{paymentQrInfo.transferCode}</strong>
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs text-white/50 text-center tracking-wide">
+              Quét được bằng tất cả App Ngân Hàng (Vietcombank, MB, Techcombank...) & Ví MoMo, ZaloPay
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Success Celebration Overlay */}
+      {showPaymentSuccess && (
+        <div className="fixed inset-0 z-[110] bg-[#06080f]/95 flex items-center justify-center p-6 animate-zoom-in backdrop-blur-md">
+          <div className="bg-[#0c101d] border-2 border-emerald-400/60 rounded-3xl p-10 max-w-md w-full flex flex-col items-center gap-5 text-center shadow-[0_0_60px_rgba(16,185,129,0.4)]">
+            <div className="w-20 h-20 rounded-full bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center text-4xl text-emerald-400 animate-bounce">
+              ✓
+            </div>
+            <div>
+              <h3 className="text-3xl font-black text-emerald-400 mb-2">ĐÃ THANH TOÁN!</h3>
+              <p className="text-white/80 text-base font-medium">Hệ thống đã nhận thanh toán thành công. Chúc bạn có những bức ảnh thật đẹp!</p>
+            </div>
+            <div className="px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-400/30 text-emerald-300 text-xs font-mono font-bold">
+              🎉 Xin cảm ơn quý khách!
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
