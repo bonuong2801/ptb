@@ -38,6 +38,27 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
   const [activeStripId, setActiveStripId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [rotatedFinalImage, setRotatedFinalImage] = useState<string | null>(null);
+
+  // Tạo trước ảnh xoay 90 độ chuẩn qua Canvas để khi xoay dải ảnh không bị cắt xén viền Frame
+  useEffect(() => {
+    if (!finalImage) return;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.height;
+      canvas.height = img.width;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate((90 * Math.PI) / 180);
+        ctx.drawImage(img, -img.width / 2, -img.height / 2);
+        setRotatedFinalImage(canvas.toDataURL('image/jpeg', 0.95));
+      }
+    };
+    img.src = finalImage;
+  }, [finalImage]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stripRefs = useRef<{ [id: string]: HTMLDivElement | null }>({});
@@ -436,16 +457,12 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
                         : 'hover:ring-1 hover:ring-cyan-400/60 z-20 shadow-md'
                     }`}
                   >
-                    {/* Ảnh dải thật */}
+                    {/* Ảnh dải thật với đầy đủ Frame kể cả khi xoay 90 độ */}
                     <div className="w-full h-full relative overflow-hidden bg-white">
                       <img 
-                        src={finalImage} 
+                        src={isRotated ? (rotatedFinalImage || finalImage) : finalImage} 
                         alt={`Strip ${idx + 1}`}
-                        style={{
-                          transform: isRotated ? 'rotate(90deg)' : undefined,
-                          transformOrigin: 'center center'
-                        }}
-                        className={`w-full h-full ${isRotated ? 'object-cover' : 'object-fill'} pointer-events-none select-none`}
+                        className="w-full h-full object-fill pointer-events-none select-none"
                       />
 
                       {/* Đường nét đứt hướng dẫn cắt kéo */}
