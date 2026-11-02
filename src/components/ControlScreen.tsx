@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, RefreshCw, ExternalLink, LayoutDashboard, Trash2, X, Scissors, Printer, FileText, DollarSign, Wallet, CreditCard, QrCode } from 'lucide-react';
+import { Camera, RefreshCw, ExternalLink, LayoutDashboard, Trash2, X, Scissors, Printer, FileText, DollarSign, Wallet, CreditCard, QrCode, Edit2, Check } from 'lucide-react';
 import { CustomFrameConfig, CHANNEL_NAME } from '../types/booth';
 import { SyncService } from '../utils/syncService';
 import { generateFinalImage, syncDB } from '../utils/frameRenderer';
@@ -79,7 +79,13 @@ export function ControlScreen() {
   const editorSaveRef = useRef<(() => CustomFrameConfig) | null>(null);
   
   const saveCurrentFrame = (targetConfig?: CustomFrameConfig) => {
-    const configToSave = targetConfig || (editorSaveRef.current ? editorSaveRef.current() : customConfig);
+    const editorData = editorSaveRef.current ? editorSaveRef.current() : null;
+    // Đảm bảo tên frame mới nhất luôn được lưu giữ (không bị editorData ghi đè tên cũ)
+    const activeName = (customConfig.name && customConfig.name.trim()) || (editorData?.name) || 'Khung Không Tên';
+    const configToSave: CustomFrameConfig = targetConfig || (editorData 
+      ? { ...editorData, name: activeName }
+      : { ...customConfig, name: activeName });
+
     setCustomConfig(configToSave);
     setSavedFrames(prev => {
       const exists = prev.findIndex(f => f.id === configToSave.id);
@@ -90,6 +96,22 @@ export function ControlScreen() {
       }
       return [...prev, configToSave];
     });
+
+    setSaveSuccessNotice(true);
+    setTimeout(() => setSaveSuccessNotice(false), 2000);
+  };
+
+  const handleRenameFrame = (id: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      setRenamingFrameId(null);
+      return;
+    }
+    setSavedFrames(prev => prev.map(f => f.id === id ? { ...f, name: trimmed } : f));
+    if (customConfig.id === id) {
+      setCustomConfig(prev => ({ ...prev, name: trimmed }));
+    }
+    setRenamingFrameId(null);
   };
 
   const createNewFrame = () => {
@@ -512,6 +534,9 @@ export function ControlScreen() {
   const [currentTransferCode, setCurrentTransferCode] = useState<string>('');
   const [transferPaymentStatus, setTransferPaymentStatus] = useState<PaymentStatus>('pending');
   const [manualShowScreen2Qr, setManualShowScreen2Qr] = useState(false);
+  const [renamingFrameId, setRenamingFrameId] = useState<string | null>(null);
+  const [renamingText, setRenamingText] = useState('');
+  const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
   const [orderNote, setOrderNote] = useState('');
   const [hasRecordedOrderForSession, setHasRecordedOrderForSession] = useState(false);
 
@@ -844,23 +869,76 @@ export function ControlScreen() {
            </div>
 
            {/* Saved Frames List */}
-           <div className="liquid-glass rounded-2xl p-5 shrink-0 max-h-48 overflow-y-auto custom-scrollbar">
-              <h2 className="card-title text-cyan-400 mb-3">Frame ({savedFrames.length})</h2>
+           <div className="liquid-glass rounded-2xl p-5 shrink-0 max-h-56 overflow-y-auto custom-scrollbar">
+              <div className="flex justify-between items-center mb-3">
+                <h2 className="card-title text-cyan-400">Frame ({savedFrames.length})</h2>
+                <button 
+                  onClick={createNewFrame}
+                  className="text-[10px] font-bold uppercase tracking-wider text-cyan-300 hover:text-white px-2.5 py-1 rounded-full bg-cyan-500/10 border border-cyan-400/30 hover:border-cyan-400 transition-all cursor-pointer"
+                  title="Thêm một Frame mới"
+                >
+                  + Mới
+                </button>
+              </div>
               <div className="flex flex-col gap-2">
                 {savedFrames.map(frame => (
                    <div key={frame.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm transition-all ${customConfig.id === frame.id ? 'border-cyan-400/50 bg-cyan-500/10 text-cyan-300 shadow-[0_0_15px_rgba(6,182,212,0.2)]' : 'bg-white/[0.03] border-white/10 text-white/60 hover:bg-white/[0.07] hover:text-white'}`}>
-                     <button 
-                       onClick={() => setCustomConfig(frame)}
-                       disabled={isSessionActive}
-                       className="flex-1 flex items-center justify-between text-left focus:outline-none cursor-pointer"
-                     >
-                       <span className="font-medium">{frame.name}</span>
-                       <span className="text-[10px] opacity-70 font-mono">{frame.totalShots} ảnh</span>
-                     </button>
-                     {savedFrames.length > 1 && (
-                       <button onClick={(e) => deleteFrame(frame.id, e)} className="p-1 hover:text-red-400 text-white/40 transition-colors cursor-pointer" title="Xóa Frame">
-                         <Trash2 className="w-3.5 h-3.5" />
-                       </button>
+                     {renamingFrameId === frame.id ? (
+                       <div className="flex-1 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                         <input 
+                           type="text"
+                           autoFocus
+                           value={renamingText}
+                           onChange={e => setRenamingText(e.target.value)}
+                           onKeyDown={e => {
+                             if (e.key === 'Enter') handleRenameFrame(frame.id, renamingText);
+                             else if (e.key === 'Escape') setRenamingFrameId(null);
+                           }}
+                           className="bg-[#0c101d] border border-cyan-400/60 rounded-lg px-2 py-1 text-xs text-white focus:outline-none flex-1 font-medium"
+                           placeholder="Nhập tên frame..."
+                         />
+                         <button 
+                           onClick={() => handleRenameFrame(frame.id, renamingText)}
+                           className="p-1 hover:text-emerald-300 text-emerald-400 cursor-pointer"
+                           title="Lưu tên (Enter)"
+                         >
+                           <Check className="w-3.5 h-3.5" />
+                         </button>
+                         <button 
+                           onClick={() => setRenamingFrameId(null)}
+                           className="p-1 hover:text-red-400 text-white/40 cursor-pointer"
+                           title="Hủy (Esc)"
+                         >
+                           <X className="w-3.5 h-3.5" />
+                         </button>
+                       </div>
+                     ) : (
+                       <>
+                         <button 
+                           onClick={() => setCustomConfig(frame)}
+                           disabled={isSessionActive}
+                           className="flex-1 flex items-center justify-between text-left focus:outline-none cursor-pointer overflow-hidden mr-1"
+                         >
+                           <span className="font-medium truncate max-w-[150px]" title={frame.name}>{frame.name}</span>
+                           <span className="text-[10px] opacity-70 font-mono shrink-0 ml-1">{frame.totalShots} ảnh</span>
+                         </button>
+                         <button 
+                           onClick={(e) => {
+                             e.stopPropagation();
+                             setRenamingFrameId(frame.id);
+                             setRenamingText(frame.name);
+                           }}
+                           className="p-1 hover:text-cyan-300 text-white/40 transition-colors cursor-pointer"
+                           title="Đổi tên Frame"
+                         >
+                           <Edit2 className="w-3.5 h-3.5" />
+                         </button>
+                         {savedFrames.length > 1 && (
+                           <button onClick={(e) => deleteFrame(frame.id, e)} className="p-1 hover:text-red-400 text-white/40 transition-colors cursor-pointer" title="Xóa Frame">
+                             <Trash2 className="w-3.5 h-3.5" />
+                           </button>
+                         )}
+                       </>
                      )}
                    </div>
                 ))}
@@ -1121,8 +1199,18 @@ export function ControlScreen() {
               <div className="flex justify-between items-center border-b border-white/10 pb-4 shrink-0">
                 <h2 className="text-xl font-black text-cyan-400 uppercase tracking-widest">Visual Frame Editor</h2>
                 <div className="flex items-center gap-3">
-                   <input type="text" value={customConfig.name} onChange={e => setCustomConfig(prev => ({...prev, name: e.target.value}))} className="bg-[#121829] border border-white/15 rounded-xl px-3.5 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-400 w-48" placeholder="Tên Frame..." />
-                   <button onClick={() => saveCurrentFrame()} className="liquid-btn-cyber text-xs uppercase px-4 py-2 cursor-pointer">Lưu</button>
+                   <input 
+                      type="text" 
+                      value={customConfig.name || ''} 
+                      onChange={e => setCustomConfig(prev => ({...prev, name: e.target.value}))} 
+                      onKeyDown={e => { if (e.key === 'Enter') saveCurrentFrame(); }}
+                      className="bg-[#121829] border border-white/15 rounded-xl px-3.5 py-1.5 text-sm text-white focus:outline-none focus:border-cyan-400 w-48 font-medium" 
+                      placeholder="Tên Frame..." 
+                      title="Nhập tên frame và bấm Lưu hoặc Enter"
+                   />
+                   <button onClick={() => saveCurrentFrame()} className="liquid-btn-cyber text-xs uppercase px-4 py-2 cursor-pointer flex items-center gap-1.5">
+                     {saveSuccessNotice ? '✓ Đã Lưu' : 'Lưu'}
+                   </button>
                    <button onClick={createNewFrame} className="bg-[#161e31] hover:bg-[#1f2a44] text-white/80 hover:text-white font-bold text-xs uppercase px-4 py-2 rounded-full border border-white/15 hover:border-cyan-400/40 transition-all cursor-pointer">Mới</button>
                    <div className="w-px h-6 bg-white/20 mx-1"></div>
                    <button onClick={() => { saveCurrentFrame(); setIsEditorOpen(false); }} className="bg-[#161e31] hover:bg-[#1f2a44] text-white/60 hover:text-white transition-all p-2 rounded-full border border-white/15 hover:border-white/30 cursor-pointer" title="Đóng và lưu">

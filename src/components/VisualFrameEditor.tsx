@@ -100,18 +100,23 @@ export function VisualFrameEditor({
     };
   }, [saveRef]);
 
-  // Đồng bộ từ ngoài vào chỉ khi ID của frame thay đổi (chọn frame khác từ danh sách)
+  // Đồng bộ từ ngoài vào khi ID của frame thay đổi hoặc tên frame thay đổi
   useEffect(() => {
     if (config.id !== lastSyncedIdRef.current) {
       lastSyncedIdRef.current = config.id;
       setLocalConfig(config);
+    } else if (config.name && config.name !== localConfigRef.current.name) {
+      setLocalConfig(prev => ({ ...prev, name: config.name }));
     }
-  }, [config]);
+  }, [config.id, config.name]);
 
-  // Đảm bảo dữ liệu mới nhất luôn được commit về ControlScreen khi đóng modal
+  // Đảm bảo dữ liệu mới nhất luôn được commit về ControlScreen khi đóng modal (bảo toàn tên mới nhất)
   useEffect(() => {
     return () => {
-      setConfig(localConfigRef.current);
+      setConfig(prev => ({
+        ...localConfigRef.current,
+        name: prev.name || localConfigRef.current.name
+      }));
     };
   }, [setConfig]);
 
@@ -351,18 +356,34 @@ export function VisualFrameEditor({
 
   return (
     <div className="w-full flex flex-col gap-4">
-      <div className="flex justify-between items-center bg-[#111726] p-3.5 rounded-2xl border border-white/10 shadow-lg">
-         <div>
-            <label className="text-xs text-white/50 uppercase tracking-widest block mb-1 font-mono">Khung ảnh (Frame PNG)</label>
-            <div className="flex items-center gap-2">
-               <label className="flex items-center gap-2 cursor-pointer bg-[#161e31] hover:bg-[#1f2a44] border border-white/15 hover:border-cyan-400/40 px-3.5 py-1.5 rounded-full text-sm transition-all">
-                  <Upload className="w-4 h-4 text-cyan-400" />
-                  <span className="text-white/90 text-xs font-medium">{localConfig.frameImage ? 'Đổi Frame' : 'Tải Frame lên'}</span>
-                  <input type="file" accept="image/png" onChange={handleFileUpload} className="hidden" />
-               </label>
-               {localConfig.frameImage && (
-                 <button onClick={() => setLocalConfig(prev => ({...prev, frameImage: null}))} className="text-[10px] text-red-400 hover:bg-red-500/20 px-2.5 py-1 rounded-full transition-colors">Xoá Ảnh</button>
-               )}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-[#111726] p-3.5 rounded-2xl border border-white/10 shadow-lg">
+         <div className="flex flex-wrap items-center gap-4">
+            <div>
+               <label className="text-xs text-white/50 uppercase tracking-widest block mb-1 font-mono">Tên Frame</label>
+               <input 
+                 type="text"
+                 value={localConfig.name || ''}
+                 onChange={e => {
+                   const val = e.target.value;
+                   setLocalConfig(prev => ({ ...prev, name: val }));
+                   setConfig(prev => ({ ...prev, name: val }));
+                 }}
+                 className="bg-[#161e31] border border-white/15 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400 w-44 font-medium"
+                 placeholder="Tên frame..."
+               />
+            </div>
+            <div>
+               <label className="text-xs text-white/50 uppercase tracking-widest block mb-1 font-mono">Khung ảnh (Frame PNG)</label>
+               <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer bg-[#161e31] hover:bg-[#1f2a44] border border-white/15 hover:border-cyan-400/40 px-3.5 py-1.5 rounded-full text-sm transition-all">
+                     <Upload className="w-4 h-4 text-cyan-400" />
+                     <span className="text-white/90 text-xs font-medium">{localConfig.frameImage ? 'Đổi Frame' : 'Tải Frame lên'}</span>
+                     <input type="file" accept="image/png" onChange={handleFileUpload} className="hidden" />
+                  </label>
+                  {localConfig.frameImage && (
+                    <button onClick={() => setLocalConfig(prev => ({...prev, frameImage: null}))} className="text-[10px] text-red-400 hover:bg-red-500/20 px-2.5 py-1 rounded-full transition-colors">Xoá Ảnh</button>
+                  )}
+               </div>
             </div>
          </div>
          <div className="flex flex-col items-end gap-2">
