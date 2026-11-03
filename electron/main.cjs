@@ -31,6 +31,18 @@ function getSaveDirectory() {
   return customConfig.saveDirectory || path.join(app.getPath('pictures'), 'CGBOOTH');
 }
 
+function getTetherDirectory() {
+  const dir = customConfig.tetherDirectory || path.join(app.getPath('pictures'), 'CGBOOTH', 'Tether_Watch');
+  if (!fs.existsSync(dir)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (e) {
+      console.warn('[CGBOOTH Tether] Lỗi tạo thư mục hot folder:', e);
+    }
+  }
+  return dir;
+}
+
 // -------------------------------------------------------------
 // PRINTER IPCs
 // -------------------------------------------------------------
@@ -119,6 +131,16 @@ app.whenReady().then(async () => {
 
   const currentDir = getSaveDirectory();
   if (!fs.existsSync(currentDir)) fs.mkdirSync(currentDir, { recursive: true });
+
+  const tetherDir = getTetherDirectory();
+  if (!fs.existsSync(tetherDir)) {
+    try { fs.mkdirSync(tetherDir, { recursive: true }); } catch (e) {}
+  }
+  try {
+    startWatchingTetherFolder(tetherDir);
+  } catch (err) {
+    console.warn('[CGBOOTH Tether] Không thể khởi động Hot Folder Watcher lúc khởi động:', err.message);
+  }
 
   createWindow();
 });

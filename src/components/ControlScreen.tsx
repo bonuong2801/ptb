@@ -488,22 +488,29 @@ export function ControlScreen() {
   // Nạp đường dẫn Hot Folder ban đầu từ Electron
   useEffect(() => {
     if (window.electronAPI?.getHotFolder) {
-      window.electronAPI.getHotFolder().then(p => {
-        if (p) setHotFolderPath(p);
-      });
+      window.electronAPI.getHotFolder()
+        .then(p => {
+          if (p) setHotFolderPath(p);
+        })
+        .catch(err => {
+          console.warn("[ControlScreen] Không thể lấy đường dẫn Hot Folder:", err);
+        });
     }
   }, []);
 
-  // Đồng bộ chế độ chụp (Live Stream vs Hot Folder 24MP) sang Customer Screen
+  // Đồng bộ chế độ chụp (Live Stream vs Hot Folder 24MP) sang Customer Screen & kích hoạt Hot Folder
   useEffect(() => {
     localStorage.setItem('capture_source_mode', captureSourceMode);
+    if (captureSourceMode === 'hotfolder' && window.electronAPI?.startTetherWatch) {
+      window.electronAPI.startTetherWatch(hotFolderPath || undefined);
+    }
     if (channel && cameraReady) {
       channel.postMessage({
         type: 'CAPTURE_MODE_SYNC',
         payload: { mode: captureSourceMode }
       });
     }
-  }, [channel, cameraReady, captureSourceMode]);
+  }, [channel, cameraReady, captureSourceMode, hotFolderPath]);
 
   // Lắng nghe ảnh gửi về từ máy ảnh cơ qua Hot Folder
   useEffect(() => {
@@ -529,20 +536,34 @@ export function ControlScreen() {
 
   const handleChangeHotFolder = async () => {
     if (window.electronAPI?.selectHotFolder) {
-      const newDir = await window.electronAPI.selectHotFolder();
-      if (newDir) setHotFolderPath(newDir);
+      try {
+        const newDir = await window.electronAPI.selectHotFolder();
+        if (newDir) setHotFolderPath(newDir);
+      } catch (err) {
+        console.error("Lỗi khi chọn thư mục Hot Folder:", err);
+      }
+    } else {
+      const promptDir = window.prompt("Nhập đường dẫn thư mục Hot Folder nhận ảnh máy ảnh:", hotFolderPath || 'Pictures/CGBOOTH/Tether_Watch');
+      if (promptDir) setHotFolderPath(promptDir);
     }
   };
 
   const handleOpenHotFolder = async () => {
     if (window.electronAPI?.openHotFolder) {
-      await window.electronAPI.openHotFolder();
+      try {
+        await window.electronAPI.openHotFolder();
+      } catch (err) {
+        console.error("Lỗi khi mở thư mục Hot Folder:", err);
+      }
+    } else {
+      alert("Tính năng mở thư mục trong File Explorer hoạt động trên ứng dụng Desktop Electron.");
     }
   };
 
   const handleTriggerShot = () => {
     if (manualShowScreen2Qr) setManualShowScreen2Qr(false);
     if (isProcessing) return;
+    if (isWaitingTetherStandalone) return;
     if (capturedImages.length >= customConfig.totalShots) return;
     if (countdown !== null) return;
 
@@ -935,84 +956,92 @@ export function ControlScreen() {
               </button>
            </div>
 
-           {/* Card Chế độ chụp & Tethering Máy Ảnh Cơ */}
-           <div className="liquid-glass rounded-2xl p-5 shrink-0 flex flex-col gap-3.5 border border-white/10 shadow-lg">
-             <div className="flex justify-between items-center">
-               <div className="flex items-center gap-2">
-                 <Camera className="w-4 h-4 text-cyan-400" />
-                 <h2 className="card-title text-cyan-400">Chế độ chụp ảnh</h2>
-               </div>
-               <button
-                 onClick={() => setShowTetherGuideModal(true)}
-                 className="text-[11px] font-bold text-cyan-300 hover:text-white flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-500/10 border border-cyan-400/30 hover:border-cyan-400 transition-all cursor-pointer"
-                 title="Xem hướng dẫn kết nối máy ảnh Canon, Sony, Nikon"
-               >
-                 <HelpCircle className="w-3 h-3 text-cyan-400" />
-                 <span>HD Canon/Sony</span>
-               </button>
-             </div>
+            {/* Card Chế độ chụp & Tethering Máy Ảnh Cơ */}
+            <div className="liquid-glass rounded-2xl p-5 shrink-0 flex flex-col gap-3.5 border border-white/10 shadow-lg">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <Camera className="w-4 h-4 text-cyan-400" />
+                  <h2 className="card-title text-cyan-400">Chế độ chụp ảnh</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTetherGuideModal(true)}
+                  className="text-[11px] font-bold text-cyan-300 hover:text-white flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-500/10 border border-cyan-400/30 hover:border-cyan-400 transition-all cursor-pointer active:scale-95"
+                  title="Xem hướng dẫn kết nối máy ảnh Canon, Sony, Nikon"
+                >
+                  <HelpCircle className="w-3 h-3 text-cyan-400" />
+                  <span>HD Canon/Sony</span>
+                </button>
+              </div>
 
-             {/* Toggle buttons: Live Stream vs Hot Folder 24MP */}
-             <div className="grid grid-cols-2 gap-2 bg-[#090d18] p-1.5 rounded-2xl border border-white/10">
-               <button
-                 type="button"
-                 onClick={() => setCaptureSourceMode('stream')}
-                 className={`py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer ${
-                   captureSourceMode === 'stream'
-                     ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-400/50 shadow-[0_0_15px_rgba(6,182,212,0.3)]'
-                     : 'text-white/50 hover:text-white'
-                 }`}
-               >
-                 <span>🎥 Live View (1080p)</span>
-               </button>
-               <button
-                 type="button"
-                 onClick={() => setCaptureSourceMode('hotfolder')}
-                 className={`py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer ${
-                   captureSourceMode === 'hotfolder'
-                     ? 'bg-gradient-to-r from-cyan-500/30 to-indigo-500/30 text-white border border-cyan-400/60 shadow-[0_0_20px_rgba(6,182,212,0.4)]'
-                     : 'text-white/50 hover:text-white'
-                 }`}
-               >
-                 <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
-                 <span>📷 Máy Cơ (24MP Gốc)</span>
-               </button>
-             </div>
+              {/* Toggle buttons: Live Stream vs Hot Folder 24MP */}
+              <div className="grid grid-cols-2 gap-2 bg-[#090d18] p-1.5 rounded-2xl border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setCaptureSourceMode('stream')}
+                  className={`py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer active:scale-95 ${
+                    captureSourceMode === 'stream'
+                      ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-400/50 shadow-[0_0_15px_rgba(6,182,212,0.3)]'
+                      : 'text-white/50 hover:text-white'
+                  }`}
+                >
+                  <span>🎥 Live View (1080p)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCaptureSourceMode('hotfolder');
+                    if (window.electronAPI?.startTetherWatch) {
+                      window.electronAPI.startTetherWatch(hotFolderPath || undefined);
+                    }
+                  }}
+                  className={`py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer active:scale-95 ${
+                    captureSourceMode === 'hotfolder'
+                      ? 'bg-gradient-to-r from-cyan-500/30 to-indigo-500/30 text-white border border-cyan-400/60 shadow-[0_0_20px_rgba(6,182,212,0.4)]'
+                      : 'text-white/50 hover:text-white'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
+                  <span>📷 Máy Cơ (24MP Gốc)</span>
+                </button>
+              </div>
 
-             {/* Chi tiết thư mục Hot Folder khi bật chế độ Máy Ảnh Cơ */}
-             {captureSourceMode === 'hotfolder' && (
-               <div className="flex flex-col gap-2.5 pt-2 border-t border-white/10 animate-zoom-in">
-                 <div className="flex items-center justify-between text-xs">
-                   <span className="text-white/60 font-medium">Thư mục nhận ảnh từ Canon/Sony:</span>
-                   <div className="flex items-center gap-1.5">
-                     <button
-                       onClick={handleChangeHotFolder}
-                       className="text-[10px] font-bold uppercase tracking-wider text-cyan-300 hover:text-white px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-400/30 hover:border-cyan-400 cursor-pointer transition-all"
-                     >
-                       Đổi thư mục
-                     </button>
-                     <button
-                       onClick={handleOpenHotFolder}
-                       className="text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white px-2.5 py-1 rounded-lg bg-white/5 border border-white/15 hover:border-white/30 cursor-pointer transition-all"
-                       title="Mở thư mục trong Windows Explorer"
-                     >
-                       Mở ↗
-                     </button>
-                   </div>
-                 </div>
-                 <p className="text-[11px] font-mono text-cyan-100/70 truncate bg-black/40 px-3 py-1.5 rounded-xl border border-white/5" title={hotFolderPath}>
-                   {hotFolderPath || 'Pictures/CGBOOTH/Tether_Watch'}
-                 </p>
-                 <div className="flex items-center justify-between text-[11px] text-cyan-300/80 bg-cyan-950/30 px-3 py-1.5 rounded-xl border border-cyan-400/20">
-                   <span className="flex items-center gap-1.5">
-                     <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-                     Hot Folder đang hoạt động
-                   </span>
-                   <span className="font-mono font-bold text-white">Đã nhận: {tetherPhotosCount} ảnh</span>
-                 </div>
-               </div>
-             )}
-           </div>
+              {/* Chi tiết thư mục Hot Folder khi bật chế độ Máy Ảnh Cơ */}
+              {captureSourceMode === 'hotfolder' && (
+                <div className="flex flex-col gap-2.5 pt-2 border-t border-white/10 animate-zoom-in">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-white/60 font-medium">Thư mục nhận ảnh từ Canon/Sony:</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleChangeHotFolder}
+                        className="text-[10px] font-bold uppercase tracking-wider text-cyan-300 hover:text-white px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-400/30 hover:border-cyan-400 cursor-pointer transition-all active:scale-95"
+                      >
+                        Đổi thư mục
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenHotFolder}
+                        className="text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white px-2.5 py-1 rounded-lg bg-white/5 border border-white/15 hover:border-white/30 cursor-pointer transition-all active:scale-95"
+                        title="Mở thư mục trong Windows Explorer"
+                      >
+                        Mở ↗
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[11px] font-mono text-cyan-100/70 truncate bg-black/40 px-3 py-1.5 rounded-xl border border-white/5" title={hotFolderPath}>
+                    {hotFolderPath || 'Pictures/CGBOOTH/Tether_Watch'}
+                  </p>
+                  <div className="flex items-center justify-between text-[11px] text-cyan-300/80 bg-cyan-950/30 px-3 py-1.5 rounded-xl border border-cyan-400/20">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                      Hot Folder đang hoạt động
+                    </span>
+                    <span className="font-mono font-bold text-white">Đã nhận: {tetherPhotosCount} ảnh</span>
+                  </div>
+                </div>
+              )}
+            </div>
 
            <div className="liquid-glass rounded-2xl p-5 shrink-0 flex flex-row justify-between items-center">
               <div className="flex flex-col">
@@ -1254,6 +1283,7 @@ export function ControlScreen() {
                     <div className="flex-1 overflow-y-auto pr-2 text-sm custom-scrollbar">
                         <div className="log-entry">[SYSTEM] Optical Glass Engine Initialized</div>
                         {cameraReady ? <div className="log-entry text-cyan-400 font-semibold">[SYNC] Customer Screen Connected</div> : <div className="log-entry text-neutral-400">[SYNC] Customer Screen not detected. Standalone mode.</div>}
+                        <div className="log-entry text-cyan-200 font-medium">[MODE] Chế độ chụp: {captureSourceMode === 'hotfolder' ? '📷 Máy Ảnh Cơ 24MP (Hot Folder)' : '🎥 Live View (1080p)'}</div>
                         {countdown !== null && <div className="log-entry text-cyan-300">[PROCESS] Triggering Shot {currentShotIndex + 1}/{customConfig.totalShots}...</div>}
                         {isProcessing && <div className="log-entry text-cyan-400 font-bold">[PROCESS] Rendering Final Strip...</div>}
                     </div>
@@ -1278,22 +1308,27 @@ export function ControlScreen() {
                    <div className="flex flex-col gap-2 h-full justify-between">
                      {/* Nút bấm chụp chính */}
                      <button
+                      type="button"
                       onClick={handleTriggerShot}
-                      disabled={countdown !== null}
-                      className="liquid-btn-cyber w-full flex-1 flex items-center justify-center gap-3 text-base py-4 shadow-[0_0_35px_rgba(6,182,212,0.35)] cursor-pointer hover:scale-[1.01] active:scale-[0.99] transition-all"
+                      disabled={countdown !== null || isWaitingTetherStandalone}
+                      className={`liquid-btn-cyber w-full flex-1 flex items-center justify-center gap-3 text-base py-4 shadow-[0_0_35px_rgba(6,182,212,0.35)] cursor-pointer hover:scale-[1.01] active:scale-[0.99] transition-all ${
+                        isWaitingTetherStandalone ? 'opacity-80 cursor-wait' : ''
+                      }`}
                       title="Phím tắt: Phím Space (Cách) hoặc Enter"
                      >
-                      <Camera className="w-5 h-5 text-cyan-200 animate-pulse" />
+                      <Camera className={`w-5 h-5 text-cyan-200 ${isWaitingTetherStandalone ? 'animate-spin' : 'animate-pulse'}`} />
                       <div className="flex flex-col items-center">
                         <span className="font-bold tracking-wider text-base">
-                          {countdown !== null 
-                            ? `ĐANG ĐẾM LÙI (${countdown}S)...` 
-                            : capturedImages.length === 0 
-                              ? `BẮT ĐẦU CHỤP (ẢNH 1/${customConfig.totalShots})` 
-                              : `CHỤP ẢNH (${capturedImages.length + 1}/${customConfig.totalShots})`}
+                          {isWaitingTetherStandalone
+                            ? 'ĐANG ĐỢI ẢNH TỪ MÁY CƠ...'
+                            : countdown !== null 
+                              ? `ĐANG ĐẾM LÙI (${countdown}S)...` 
+                              : capturedImages.length === 0 
+                                ? `BẮT ĐẦU CHỤP (ẢNH 1/${customConfig.totalShots})` 
+                                : `CHỤP ẢNH (${capturedImages.length + 1}/${customConfig.totalShots})`}
                         </span>
                         <span className="text-[10px] text-cyan-200/70 font-mono tracking-normal uppercase">
-                          Bấm chuột hoặc nhấn phím Space / Enter
+                          {isWaitingTetherStandalone ? 'Đang đọc ảnh 24MP qua Hot Folder...' : 'Bấm chuột hoặc nhấn phím Space / Enter'}
                         </span>
                       </div>
                      </button>
@@ -1368,7 +1403,7 @@ export function ControlScreen() {
       
       {/* Modal Hướng Dẫn Cài Đặt Máy Ảnh Canon / Sony Tethering */}
       {showTetherGuideModal && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-zoom-in">
+        <div onClick={(e) => { if (e.target === e.currentTarget) setShowTetherGuideModal(false); }} className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-zoom-in">
           <div className="bg-[#0c101d] border border-cyan-400/40 p-6 sm:p-8 rounded-3xl w-full max-w-xl max-h-[90vh] overflow-y-auto custom-scrollbar flex flex-col gap-5 shadow-[0_25px_60px_rgba(0,0,0,0.85)]">
             <div className="flex justify-between items-center border-b border-white/10 pb-4">
               <div className="flex items-center gap-2.5">
