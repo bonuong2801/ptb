@@ -403,6 +403,17 @@ export function ControlScreen() {
     }
   };
 
+  const leftColumnRef = useRef<HTMLDivElement>(null);
+  const handleRightWheel = (e: React.WheelEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('.overflow-y-auto')) {
+      return;
+    }
+    if (leftColumnRef.current) {
+      leftColumnRef.current.scrollTop += e.deltaY;
+    }
+  };
+
   const [shootDelay, setShootDelay] = useState<number>(0);
   const [captureSourceMode, setCaptureSourceMode] = useState<CaptureSourceMode>(() => (localStorage.getItem('capture_source_mode') as CaptureSourceMode) || 'stream');
   const [hotFolderPath, setHotFolderPath] = useState<string>('');
@@ -869,9 +880,9 @@ export function ControlScreen() {
   }, [capturedImages.length, customConfig.totalShots, isProcessing, countdown, isEditorOpen, isA4ArrangerOpen, isPrintModalOpen, cameraReady, channel, shootDelay]);
 
   return (
-    <div className="flex-1 w-full p-6 max-w-[1440px] mx-auto h-full overflow-y-auto custom-scrollbar">
+    <div className="flex-1 w-full p-4 sm:p-6 max-w-[1680px] mx-auto h-full flex flex-col overflow-hidden">
       {/* Header Bar */}
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center mb-4 shrink-0">
         <div className="flex items-center gap-4">
           <div className="w-11 h-11 rounded-2xl liquid-glass flex items-center justify-center border border-cyan-400/30 shadow-[0_0_20px_rgba(6,182,212,0.25)]">
             <LayoutDashboard className="w-5 h-5 text-cyan-400" />
@@ -939,9 +950,9 @@ export function ControlScreen() {
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-6 pb-8 min-h-[850px]">
-        {/* Left Column: Config Builder & Strip Preview */}
-        <div className="flex-[1.2] flex flex-col gap-4">
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-6 pb-2">
+        {/* Left Column: Config Builder & Strip Preview (Independent Scroll) */}
+        <div ref={leftColumnRef} className="flex-[1.1] xl:flex-[1] min-h-0 flex flex-col gap-4 overflow-y-auto custom-scrollbar pr-2 pb-6">
            
            <div className="liquid-glass rounded-2xl p-5 shrink-0 flex flex-row justify-between items-center">
               <div className="flex flex-col overflow-hidden mr-4">
@@ -1147,7 +1158,7 @@ export function ControlScreen() {
               </div>
            </div>
 
-           <div className="liquid-glass rounded-2xl p-5 flex flex-col flex-1 min-h-[400px] relative">
+           <div className="liquid-glass rounded-2xl p-5 flex flex-col h-[460px] shrink-0 relative">
              <h2 className="card-title text-cyan-400 mb-4 text-center shrink-0">Xem trước Photo Strip</h2>
              <div className="flex-1 overflow-hidden flex flex-col items-center p-4 bg-black/40 rounded-xl relative">
                 <div className="absolute inset-0 p-4">
@@ -1157,9 +1168,9 @@ export function ControlScreen() {
            </div>
         </div>
 
-        {/* Right Column: Process & Camera */}
-        <div className="flex-[2] flex flex-col gap-4">
-           <div className="liquid-glass rounded-3xl overflow-hidden relative shadow-2xl flex-1 min-h-[320px]">
+        {/* Right Column: Process & Camera (Stationary / Fixed Live View) */}
+        <div onWheel={handleRightWheel} className="flex-[1.9] xl:flex-[2] min-h-0 h-full flex flex-col gap-4 shrink-0">
+           <div className="liquid-glass rounded-3xl overflow-hidden relative shadow-2xl flex-1 min-h-[280px]">
              {/* Floating Camera HUD */}
              <div className="absolute top-3 right-3 liquid-glass-pill px-3 py-1.5 flex items-center gap-2.5 z-30 border border-white/15 shadow-[0_4px_20px_rgba(0,0,0,0.5)]">
                <button 
