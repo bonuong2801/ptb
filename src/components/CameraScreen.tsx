@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { RefreshCw } from 'lucide-react';
-import { CustomFrameConfig, CHANNEL_NAME } from '../types/booth';
+import { RefreshCw, Camera } from 'lucide-react';
+import { CustomFrameConfig, CHANNEL_NAME, CaptureSourceMode, TetherPhotoData } from '../types/booth';
 import { SyncService } from '../utils/syncService';
 import { generateFinalImage, syncDB } from '../utils/frameRenderer';
 import { ScalablePreview } from './VisualFrameEditor';
@@ -44,6 +44,10 @@ export function CameraScreen() {
     accountHolder?: string;
   } | null>(null);
   const [showPaymentSuccess, setShowPaymentSuccess] = useState(false);
+  const [captureSourceMode, setCaptureSourceMode] = useState<CaptureSourceMode>(() => (localStorage.getItem('capture_source_mode') as CaptureSourceMode) || 'stream');
+  const [isWaitingForTetherPhoto, setIsWaitingForTetherPhoto] = useState(false);
+  const isWaitingTetherRef = useRef(false);
+  const tetherFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<BlobPart[]>([]);
@@ -77,10 +81,33 @@ export function CameraScreen() {
     }
   };
 
-  const takePhoto = (shotIndex: number) => {
-    setFlash(true);
-    setTimeout(() => setFlash(false), 150);
+  const commitShotImage = (imageUrl: string) => {
+    const currState = stateRef.current;
+    const updated = [...currState.capturedImages, imageUrl];
+      
+    setCapturedImages(updated);
+    setCurrentShotIndex(updated.length);
+      
+    if (updated.length >= currState.customConfig.totalShots) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      setIsProcessing(true);
+      broadcastState({ capturedImages: updated, currentShotIndex: updated.length, isProcessing: true });
+      
+      setTimeout(() => {
+        setIsProcessing(false);
+        setIsSessionActive(false);
+        broadcastState({ capturedImages: updated, currentShotIndex: updated.length, isProcessing: false, isSessionActive: false });
+      }, 800);
+    } else {
+      // CHẾ ĐỘ BẤM CHỦ ĐỘNG: Dừng lại và chờ người dùng bấm shot tiếp theo!
+      setIsSessionActive(true);
+      broadcastState({ capturedImages: updated, currentShotIndex: updated.length, isSessionActive: true, isProcessing: false, countdown: null });
+    }
+  };
 
+  const captureFromVideoCanvas = (shotIndex: number) => {
     if (canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
@@ -110,30 +137,31 @@ export function CameraScreen() {
         }
           
         const newImage = canvas.toDataURL('image/jpeg', 0.9);
-        const currState = stateRef.current;
-        const updated = [...currState.capturedImages, newImage];
-          
-        setCapturedImages(updated);
-        setCurrentShotIndex(updated.length);
-          
-        if (updated.length >= currState.customConfig.totalShots) {
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-            mediaRecorderRef.current.stop();
-          }
-          setIsProcessing(true);
-          broadcastState({ capturedImages: updated, currentShotIndex: updated.length, isProcessing: true });
-          
-          setTimeout(() => {
-            setIsProcessing(false);
-            setIsSessionActive(false);
-            broadcastState({ capturedImages: updated, currentShotIndex: updated.length, isProcessing: false, isSessionActive: false });
-          }, 800);
-        } else {
-          // CHẾ ĐỘ BẤM CHỦ ĐỘNG: Dừng lại và chờ người dùng bấm shot tiếp theo!
-          setIsSessionActive(true);
-          broadcastState({ capturedImages: updated, currentShotIndex: updated.length, isSessionActive: true, isProcessing: false, countdown: null });
-        }
+        commitShotImage(newImage);
       }
+    }
+  };
+
+  const takePhoto = (shotIndex: number) => {
+    setFlash(true);
+    setTimeout(() => setFlash(false), 150);
+
+    if (captureSourceMode === 'hotfolder') {
+      isWaitingTetherRef.current = true;
+      setIsWaitingForTetherPhoto(true);
+
+      // Fallback 6.5s: Nếu máy ảnh không gửi file sau 6.5s thì chụp từ video canvas để không bị đơ session
+      if (tetherFallbackTimerRef.current) clearTimeout(tetherFallbackTimerRef.current);
+      tetherFallbackTimerRef.current = setTimeout(() => {
+        if (isWaitingTetherRef.current) {
+          console.warn('[CameraScreen] Tether timeout (6.5s) - Fallback to video canvas');
+          isWaitingTetherRef.current = false;
+          setIsWaitingForTetherPhoto(false);
+          captureFromVideoCanvas(shotIndex);
+        }
+      }, 6500);
+    } else {
+      captureFromVideoCanvas(shotIndex);
     }
   };
 
@@ -228,6 +256,12 @@ export function CameraScreen() {
     setRecordedVideoBlob(null);
     setPaymentQrInfo(null);
     setShowPaymentSuccess(false);
+    if (tetherFallbackTimerRef.current) {
+      clearTimeout(tetherFallbackTimerRef.current);
+      tetherFallbackTimerRef.current = null;
+    }
+    isWaitingTetherRef.current = false;
+    setIsWaitingForTetherPhoto(false);
     setCurrentShotIndex(0);
     setIsSessionActive(false);
     setCountdown(null);
@@ -314,6 +348,28 @@ export function CameraScreen() {
     processAll();
   }, [finalImage, recordedVideoBlob, capturedImages, customConfig.totalShots]);
 
+  
+  // Tether Hot Folder Photo Ingestion Listener
+  useEffect(() => {
+    if (window.electronAPI?.onTetherPhoto) {
+      const unsub = window.electronAPI.onTetherPhoto((photo) => {
+        if (isWaitingTetherRef.current) {
+          if (tetherFallbackTimerRef.current) {
+            clearTimeout(tetherFallbackTimerRef.current);
+            tetherFallbackTimerRef.current = null;
+          }
+          isWaitingTetherRef.current = false;
+          setIsWaitingForTetherPhoto(false);
+          console.log('[CameraScreen] Đã nhận ảnh 24MP từ máy ảnh:', photo.filename);
+          commitShotImage(photo.dataUrl);
+        }
+      });
+      return () => {
+        if (unsub) unsub();
+      };
+    }
+  }, []);
+
   const actionsRef = useRef({ beginSession, resetLocalSession, triggerShot, retakeLastShot });
   useEffect(() => {
     actionsRef.current = { beginSession, resetLocalSession, triggerShot, retakeLastShot };
@@ -356,6 +412,11 @@ export function CameraScreen() {
         actionsRef.current.triggerShot(delay);
       } else if (type === 'RESET_SESSION') {
         actionsRef.current.resetLocalSession();
+      } else if (type === 'CAPTURE_MODE_SYNC' && payload) {
+        if (payload.mode) {
+          setCaptureSourceMode(payload.mode);
+          localStorage.setItem('capture_source_mode', payload.mode);
+        }
       } else if (type === 'PAYMENT_QR_SYNC' && payload) {
         setPaymentQrInfo(payload);
       }
@@ -452,6 +513,28 @@ export function CameraScreen() {
             <canvas ref={canvasRef} className="hidden" />
             <canvas ref={liveCanvasRef} className="hidden" />
             
+            
+            {/* Tether Hot Folder Receiving Photo Overlay */}
+            {isWaitingForTetherPhoto && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/75 z-40 animate-zoom-in backdrop-blur-sm">
+                <div className="bg-[#0c101d] border-2 border-cyan-400/60 rounded-3xl p-8 flex flex-col items-center gap-4 shadow-[0_0_50px_rgba(6,182,212,0.4)] max-w-sm text-center">
+                  <div className="relative">
+                    <div className="w-16 h-16 rounded-2xl bg-cyan-500/15 border border-cyan-400/40 flex items-center justify-center shadow-[0_0_20px_rgba(6,182,212,0.3)]">
+                      <Camera className="w-8 h-8 text-cyan-300 animate-pulse" />
+                    </div>
+                    <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-cyan-400 rounded-full animate-ping" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-cyan-300 font-mono tracking-wider">ĐANG NHẬN ẢNH TỪ MÁY ẢNH</h3>
+                    <p className="text-xs text-white/60 font-mono mt-1">Độ phân giải 24MP • Cảm biến quang học</p>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-amber-300/90 bg-amber-500/10 px-3 py-1.5 rounded-full border border-amber-400/20 font-mono font-bold">
+                    <span className="animate-spin">⏳</span> Đang truyền file qua cáp USB...
+                  </div>
+                </div>
+              </div>
+            )}
+
             {countdown !== null && (
               <div key={countdown} className="absolute inset-0 flex items-center justify-center pointer-events-none z-30 animate-countdown-pop">
                 <div className="liquid-lens-countdown">

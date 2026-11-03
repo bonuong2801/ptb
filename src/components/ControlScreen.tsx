@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, RefreshCw, ExternalLink, LayoutDashboard, Trash2, X, Scissors, Printer, FileText, DollarSign, Wallet, CreditCard, QrCode, Edit2, Check } from 'lucide-react';
-import { CustomFrameConfig, CHANNEL_NAME } from '../types/booth';
+import { Camera, RefreshCw, ExternalLink, LayoutDashboard, Trash2, X, Scissors, Printer, FileText, DollarSign, Wallet, CreditCard, QrCode, Edit2, Check, Sparkles, HelpCircle, FolderOpen } from 'lucide-react';
+import { CustomFrameConfig, CHANNEL_NAME, CaptureSourceMode, TetherPhotoData } from '../types/booth';
 import { SyncService } from '../utils/syncService';
 import { generateFinalImage, syncDB } from '../utils/frameRenderer';
 import { VisualFrameEditor, ScalablePreview } from './VisualFrameEditor';
@@ -404,8 +404,34 @@ export function ControlScreen() {
   };
 
   const [shootDelay, setShootDelay] = useState<number>(0);
+  const [captureSourceMode, setCaptureSourceMode] = useState<CaptureSourceMode>(() => (localStorage.getItem('capture_source_mode') as CaptureSourceMode) || 'stream');
+  const [hotFolderPath, setHotFolderPath] = useState<string>('');
+  const [tetherPhotosCount, setTetherPhotosCount] = useState<number>(0);
+  const [showTetherGuideModal, setShowTetherGuideModal] = useState<boolean>(false);
+  const [tetherGuideTab, setTetherGuideTab] = useState<'canon' | 'sony'>('canon');
+  const isWaitingTetherStandaloneRef = useRef<boolean>(false);
+  const [isWaitingTetherStandalone, setIsWaitingTetherStandalone] = useState<boolean>(false);
+  const tetherStandaloneFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const takePhotoLocal = (shotIndex: number) => {
+  const commitShotImageLocal = (imageUrl: string) => {
+    const currState = stateRef.current;
+    const updated = [...currState.capturedImages, imageUrl];
+    setCapturedImages(updated);
+    setCurrentShotIndex(updated.length);
+
+    if (updated.length >= currState.customConfig.totalShots) {
+      setIsProcessing(true);
+      processingTimeoutRef.current = setTimeout(() => {
+        processingTimeoutRef.current = null;
+        setIsProcessing(false);
+        setIsSessionActive(false);
+      }, 1000);
+    } else {
+      setIsSessionActive(true);
+    }
+  };
+
+  const captureFromVideoCanvasLocal = (shotIndex: number) => {
     if (canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
@@ -434,23 +460,83 @@ export function ControlScreen() {
         }
 
         const newImage = canvas.toDataURL('image/jpeg');
-        const currState = stateRef.current;
-        const updated = [...currState.capturedImages, newImage];
-        setCapturedImages(updated);
-        setCurrentShotIndex(updated.length);
-
-        if (updated.length >= currState.customConfig.totalShots) {
-          setIsProcessing(true);
-          processingTimeoutRef.current = setTimeout(() => {
-            processingTimeoutRef.current = null;
-            setIsProcessing(false);
-            setIsSessionActive(false);
-          }, 1000);
-        } else {
-          // CHẾ ĐỘ BẤM CHỦ ĐỘNG: Dừng lại và chờ bấm shot tiếp theo!
-          setIsSessionActive(true);
-        }
+        commitShotImageLocal(newImage);
       }
+    }
+  };
+
+  const takePhotoLocal = (shotIndex: number) => {
+    if (captureSourceMode === 'hotfolder') {
+      isWaitingTetherStandaloneRef.current = true;
+      setIsWaitingTetherStandalone(true);
+
+      if (tetherStandaloneFallbackRef.current) clearTimeout(tetherStandaloneFallbackRef.current);
+      tetherStandaloneFallbackRef.current = setTimeout(() => {
+        if (isWaitingTetherStandaloneRef.current) {
+          console.warn('[ControlScreen Standalone] Tether timeout (6.5s) - Fallback to video canvas');
+          isWaitingTetherStandaloneRef.current = false;
+          setIsWaitingTetherStandalone(false);
+          captureFromVideoCanvasLocal(shotIndex);
+        }
+      }, 6500);
+    } else {
+      captureFromVideoCanvasLocal(shotIndex);
+    }
+  };
+
+  
+  // Nạp đường dẫn Hot Folder ban đầu từ Electron
+  useEffect(() => {
+    if (window.electronAPI?.getHotFolder) {
+      window.electronAPI.getHotFolder().then(p => {
+        if (p) setHotFolderPath(p);
+      });
+    }
+  }, []);
+
+  // Đồng bộ chế độ chụp (Live Stream vs Hot Folder 24MP) sang Customer Screen
+  useEffect(() => {
+    localStorage.setItem('capture_source_mode', captureSourceMode);
+    if (channel && cameraReady) {
+      channel.postMessage({
+        type: 'CAPTURE_MODE_SYNC',
+        payload: { mode: captureSourceMode }
+      });
+    }
+  }, [channel, cameraReady, captureSourceMode]);
+
+  // Lắng nghe ảnh gửi về từ máy ảnh cơ qua Hot Folder
+  useEffect(() => {
+    if (window.electronAPI?.onTetherPhoto) {
+      const unsub = window.electronAPI.onTetherPhoto((photo) => {
+        setTetherPhotosCount(prev => prev + 1);
+        // Hỗ trợ chế độ Standalone (!cameraReady)
+        if (!cameraReady && isWaitingTetherStandaloneRef.current) {
+          if (tetherStandaloneFallbackRef.current) {
+            clearTimeout(tetherStandaloneFallbackRef.current);
+            tetherStandaloneFallbackRef.current = null;
+          }
+          isWaitingTetherStandaloneRef.current = false;
+          setIsWaitingTetherStandalone(false);
+          commitShotImageLocal(photo.dataUrl);
+        }
+      });
+      return () => {
+        if (unsub) unsub();
+      };
+    }
+  }, [cameraReady]);
+
+  const handleChangeHotFolder = async () => {
+    if (window.electronAPI?.selectHotFolder) {
+      const newDir = await window.electronAPI.selectHotFolder();
+      if (newDir) setHotFolderPath(newDir);
+    }
+  };
+
+  const handleOpenHotFolder = async () => {
+    if (window.electronAPI?.openHotFolder) {
+      await window.electronAPI.openHotFolder();
     }
   };
 
@@ -537,6 +623,7 @@ export function ControlScreen() {
   const [renamingFrameId, setRenamingFrameId] = useState<string | null>(null);
   const [renamingText, setRenamingText] = useState('');
   const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
+
   const [orderNote, setOrderNote] = useState('');
   const [hasRecordedOrderForSession, setHasRecordedOrderForSession] = useState(false);
 
@@ -729,6 +816,13 @@ export function ControlScreen() {
     setIsProcessing(false);
     setHasRecordedOrderForSession(false);
     setPaymentMethod('cash');
+    setTetherPhotosCount(0);
+    if (tetherStandaloneFallbackRef.current) {
+      clearTimeout(tetherStandaloneFallbackRef.current);
+      tetherStandaloneFallbackRef.current = null;
+    }
+    isWaitingTetherStandaloneRef.current = false;
+    setIsWaitingTetherStandalone(false);
     setOrderNote('');
   };
 
@@ -839,6 +933,85 @@ export function ControlScreen() {
               >
                 Đổi thư mục
               </button>
+           </div>
+
+           {/* Card Chế độ chụp & Tethering Máy Ảnh Cơ */}
+           <div className="liquid-glass rounded-2xl p-5 shrink-0 flex flex-col gap-3.5 border border-white/10 shadow-lg">
+             <div className="flex justify-between items-center">
+               <div className="flex items-center gap-2">
+                 <Camera className="w-4 h-4 text-cyan-400" />
+                 <h2 className="card-title text-cyan-400">Chế độ chụp ảnh</h2>
+               </div>
+               <button
+                 onClick={() => setShowTetherGuideModal(true)}
+                 className="text-[11px] font-bold text-cyan-300 hover:text-white flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-500/10 border border-cyan-400/30 hover:border-cyan-400 transition-all cursor-pointer"
+                 title="Xem hướng dẫn kết nối máy ảnh Canon, Sony, Nikon"
+               >
+                 <HelpCircle className="w-3 h-3 text-cyan-400" />
+                 <span>HD Canon/Sony</span>
+               </button>
+             </div>
+
+             {/* Toggle buttons: Live Stream vs Hot Folder 24MP */}
+             <div className="grid grid-cols-2 gap-2 bg-[#090d18] p-1.5 rounded-2xl border border-white/10">
+               <button
+                 type="button"
+                 onClick={() => setCaptureSourceMode('stream')}
+                 className={`py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer ${
+                   captureSourceMode === 'stream'
+                     ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-400/50 shadow-[0_0_15px_rgba(6,182,212,0.3)]'
+                     : 'text-white/50 hover:text-white'
+                 }`}
+               >
+                 <span>🎥 Live View (1080p)</span>
+               </button>
+               <button
+                 type="button"
+                 onClick={() => setCaptureSourceMode('hotfolder')}
+                 className={`py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer ${
+                   captureSourceMode === 'hotfolder'
+                     ? 'bg-gradient-to-r from-cyan-500/30 to-indigo-500/30 text-white border border-cyan-400/60 shadow-[0_0_20px_rgba(6,182,212,0.4)]'
+                     : 'text-white/50 hover:text-white'
+                 }`}
+               >
+                 <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
+                 <span>📷 Máy Cơ (24MP Gốc)</span>
+               </button>
+             </div>
+
+             {/* Chi tiết thư mục Hot Folder khi bật chế độ Máy Ảnh Cơ */}
+             {captureSourceMode === 'hotfolder' && (
+               <div className="flex flex-col gap-2.5 pt-2 border-t border-white/10 animate-zoom-in">
+                 <div className="flex items-center justify-between text-xs">
+                   <span className="text-white/60 font-medium">Thư mục nhận ảnh từ Canon/Sony:</span>
+                   <div className="flex items-center gap-1.5">
+                     <button
+                       onClick={handleChangeHotFolder}
+                       className="text-[10px] font-bold uppercase tracking-wider text-cyan-300 hover:text-white px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-400/30 hover:border-cyan-400 cursor-pointer transition-all"
+                     >
+                       Đổi thư mục
+                     </button>
+                     <button
+                       onClick={handleOpenHotFolder}
+                       className="text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white px-2.5 py-1 rounded-lg bg-white/5 border border-white/15 hover:border-white/30 cursor-pointer transition-all"
+                       title="Mở thư mục trong Windows Explorer"
+                     >
+                       Mở ↗
+                     </button>
+                   </div>
+                 </div>
+                 <p className="text-[11px] font-mono text-cyan-100/70 truncate bg-black/40 px-3 py-1.5 rounded-xl border border-white/5" title={hotFolderPath}>
+                   {hotFolderPath || 'Pictures/CGBOOTH/Tether_Watch'}
+                 </p>
+                 <div className="flex items-center justify-between text-[11px] text-cyan-300/80 bg-cyan-950/30 px-3 py-1.5 rounded-xl border border-cyan-400/20">
+                   <span className="flex items-center gap-1.5">
+                     <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                     Hot Folder đang hoạt động
+                   </span>
+                   <span className="font-mono font-bold text-white">Đã nhận: {tetherPhotosCount} ảnh</span>
+                 </div>
+               </div>
+             )}
            </div>
 
            <div className="liquid-glass rounded-2xl p-5 shrink-0 flex flex-row justify-between items-center">
@@ -1191,6 +1364,102 @@ export function ControlScreen() {
         </div>
 
       </div>
+
+      
+      {/* Modal Hướng Dẫn Cài Đặt Máy Ảnh Canon / Sony Tethering */}
+      {showTetherGuideModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-zoom-in">
+          <div className="bg-[#0c101d] border border-cyan-400/40 p-6 sm:p-8 rounded-3xl w-full max-w-xl max-h-[90vh] overflow-y-auto custom-scrollbar flex flex-col gap-5 shadow-[0_25px_60px_rgba(0,0,0,0.85)]">
+            <div className="flex justify-between items-center border-b border-white/10 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center">
+                  <Sparkles className="w-5 h-5 text-cyan-300" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-white uppercase tracking-wider">Cài Đặt Chụp Ảnh Gốc 24MP (Tether)</h3>
+                  <p className="text-xs text-white/50">Lấy ảnh trực tiếp từ cảm biến máy ảnh cơ</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowTetherGuideModal(false)}
+                className="p-2 text-white/50 hover:text-white rounded-full bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Brand Switcher */}
+            <div className="flex rounded-xl bg-[#111726] p-1 border border-white/10">
+              <button
+                onClick={() => setTetherGuideTab('canon')}
+                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                  tetherGuideTab === 'canon'
+                    ? 'bg-red-600/30 text-white border border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.3)]'
+                    : 'text-white/50 hover:text-white'
+                }`}
+              >
+                🔴 Máy Ảnh CANON (EOS Utility)
+              </button>
+              <button
+                onClick={() => setTetherGuideTab('sony')}
+                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                  tetherGuideTab === 'sony'
+                    ? 'bg-amber-600/30 text-white border border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.3)]'
+                    : 'text-white/50 hover:text-white'
+                }`}
+              >
+                🟠 Máy Ảnh SONY (Imaging Edge)
+              </button>
+            </div>
+
+            {/* Tab content */}
+            {tetherGuideTab === 'canon' ? (
+              <div className="flex flex-col gap-3.5 text-xs text-white/80 leading-relaxed font-sans">
+                <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col gap-2">
+                  <strong className="text-cyan-300 font-bold">Bước 1: Cài đặt phần mềm chính hãng</strong>
+                  <p>Tải và cài đặt phần mềm miễn phí <strong>Canon EOS Utility</strong> (đi kèm theo máy ảnh Canon hoặc tải từ website Canon).</p>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col gap-2">
+                  <strong className="text-cyan-300 font-bold">Bước 2: Cắm cáp USB & Cài đặt thư mục</strong>
+                  <p>Cắm dây cáp USB từ máy ảnh Canon vào máy tính. Mở EOS Utility $\rightarrow$ Bấm <strong>Preferences</strong> (Cài đặt) $\rightarrow$ Đặt thư mục <strong>Destination Folder</strong> trỏ vào:</p>
+                  <code className="bg-black/60 p-2 rounded-lg text-cyan-300 font-mono text-[11px] block select-all">
+                    {hotFolderPath || 'Pictures/CGBOOTH/Tether_Watch'}
+                  </code>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-400/30 text-emerald-200">
+                  ✓ <strong>Hoàn tất:</strong> Khi đếm ngược xong, máy ảnh Canon sẽ chụp cơ và ảnh 24MP tự động bay về NeoBooth trong 0.8 giây!
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3.5 text-xs text-white/80 leading-relaxed font-sans">
+                <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col gap-2">
+                  <strong className="text-cyan-300 font-bold">Bước 1: Cài đặt trên máy ảnh Sony</strong>
+                  <p>Vào <strong>MENU máy ảnh Sony</strong> $\rightarrow$ Thẻ Setup (Hộp đồ nghề) $\rightarrow$ <strong>USB Connection</strong> $\rightarrow$ Chọn chế độ <strong>PC Remote</strong>.</p>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col gap-2">
+                  <strong className="text-cyan-300 font-bold">Bước 2: Mở Sony Imaging Edge (Remote)</strong>
+                  <p>Cắm cáp USB vào máy tính $\rightarrow$ Mở phần mềm <strong>Remote (Imaging Edge Desktop)</strong> $\rightarrow$ Đặt thư mục lưu ảnh <strong>Save to</strong> trỏ vào:</p>
+                  <code className="bg-black/60 p-2 rounded-lg text-cyan-300 font-mono text-[11px] block select-all">
+                    {hotFolderPath || 'Pictures/CGBOOTH/Tether_Watch'}
+                  </code>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-400/30 text-emerald-200">
+                  ✓ <strong>Hoàn tất:</strong> Máy ảnh Sony chụp cơ và truyền ảnh gốc 24MP siêu sắc nét thẳng vào NeoBooth!
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setShowTetherGuideModal(false)}
+                className="liquid-btn-cyber text-xs uppercase px-5 py-2.5 cursor-pointer"
+              >
+                Đã Hiểu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Editor Modal Overlay */}
       {isEditorOpen && (

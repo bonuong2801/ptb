@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, dialog, session } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -331,4 +331,180 @@ ipcMain.handle('get-accounting-backup', async () => {
     console.warn('[CGBOOTH] Không thể đọc file backup sổ sách:', err.message);
   }
   return null;
+});
+
+
+// -------------------------------------------------------------
+// TETHERED CAMERA HOT FOLDER ENGINE
+// -------------------------------------------------------------
+let tetherWatcher = null;
+let currentTetherDir = null;
+const processedTetherFiles = new Set();
+let isTetherWatching = false;
+
+function broadcastTetherPhoto(photoData) {
+  if (adminWindow && !adminWindow.isDestroyed()) {
+    adminWindow.webContents.send('new-tether-photo', photoData);
+  }
+  if (customerWindow && !customerWindow.isDestroyed()) {
+    customerWindow.webContents.send('new-tether-photo', photoData);
+  }
+}
+
+function waitForFileReady(filePath, maxWaitMs = 6000) {
+  return new Promise((resolve, reject) => {
+    const startTime = Date.now();
+    let lastSize = -1;
+    let stableCount = 0;
+
+    const check = () => {
+      fs.stat(filePath, (err, stats) => {
+        if (err) {
+          if (Date.now() - startTime > maxWaitMs) return reject(err);
+          return setTimeout(check, 100);
+        }
+        if (stats.size > 0 && stats.size === lastSize) {
+          stableCount++;
+          if (stableCount >= 2) {
+            fs.open(filePath, 'r', (openErr, fd) => {
+              if (!openErr) {
+                fs.close(fd, () => resolve(true));
+                return;
+              }
+              if (Date.now() - startTime > maxWaitMs) return reject(openErr);
+              setTimeout(check, 100);
+            });
+            return;
+          }
+        } else {
+          lastSize = stats.size;
+          stableCount = 0;
+        }
+
+        if (Date.now() - startTime > maxWaitMs) {
+          return reject(new Error('Timeout chờ máy ảnh ghi file xong'));
+        }
+        setTimeout(check, 100);
+      });
+    };
+    check();
+  });
+}
+
+function startWatchingTetherFolder(targetDir) {
+  if (tetherWatcher) {
+    try { tetherWatcher.close(); } catch (e) {}
+    tetherWatcher = null;
+  }
+
+  const watchDir = targetDir || getTetherDirectory();
+  currentTetherDir = watchDir;
+  if (!fs.existsSync(watchDir)) {
+    try { fs.mkdirSync(watchDir, { recursive: true }); } catch (e) {}
+  }
+
+  // Ghi nhận các file đã có từ trước để chỉ bắt các ảnh chụp mới
+  try {
+    const existing = fs.readdirSync(watchDir);
+    existing.forEach(f => processedTetherFiles.add(path.join(watchDir, f)));
+  } catch (e) {}
+
+  isTetherWatching = true;
+
+  try {
+    tetherWatcher = fs.watch(watchDir, async (eventType, filename) => {
+      if (!filename) return;
+      const ext = path.extname(filename).toLowerCase();
+      if (!['.jpg', '.jpeg', '.png'].includes(ext)) return;
+
+      const fullPath = path.join(watchDir, filename);
+      if (processedTetherFiles.has(fullPath)) return;
+
+      processedTetherFiles.add(fullPath);
+
+      try {
+        await waitForFileReady(fullPath);
+        const fileBuffer = await fs.promises.readFile(fullPath);
+        const base64 = fileBuffer.toString('base64');
+        const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+
+        console.log(`[CGBOOTH Tether] Nhận ảnh mới từ máy ảnh: ${filename} (${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
+        broadcastTetherPhoto({
+          filename,
+          fullPath,
+          dataUrl,
+          size: fileBuffer.length,
+          timestamp: Date.now()
+        });
+      } catch (err) {
+        console.error('[CGBOOTH Tether] Lỗi xử lý file:', err);
+        processedTetherFiles.delete(fullPath);
+      }
+    });
+
+    console.log('[CGBOOTH Tether] Hot Folder Watcher đang chạy tại:', watchDir);
+  } catch (err) {
+    console.error('[CGBOOTH Tether] Không thể khởi động Hot Folder Watcher:', err);
+  }
+}
+
+function stopWatchingTetherFolder() {
+  if (tetherWatcher) {
+    try { tetherWatcher.close(); } catch (e) {}
+    tetherWatcher = null;
+  }
+  isTetherWatching = false;
+  console.log('[CGBOOTH Tether] Hot Folder Watcher đã dừng.');
+}
+
+ipcMain.handle('get-hot-folder-path', () => getTetherDirectory());
+
+ipcMain.handle('set-hot-folder-path', (event, newPath) => {
+  if (newPath) {
+    saveConfig('tetherDirectory', newPath);
+    startWatchingTetherFolder(newPath);
+    return { success: true, path: newPath };
+  }
+  return { success: false };
+});
+
+ipcMain.handle('select-hot-folder-dialog', async () => {
+  const result = await dialog.showOpenDialog(adminWindow, {
+    title: 'Chọn Thư Mục Nhận Ảnh Máy Ảnh (Hot Folder)',
+    defaultPath: getTetherDirectory(),
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (!result.canceled && result.filePaths.length > 0) {
+    const selected = result.filePaths[0];
+    saveConfig('tetherDirectory', selected);
+    startWatchingTetherFolder(selected);
+    return selected;
+  }
+  return null;
+});
+
+ipcMain.handle('open-hot-folder', async () => {
+  const dir = getTetherDirectory();
+  await shell.openPath(dir);
+  return { success: true };
+});
+
+ipcMain.handle('start-tether-watch', (event, targetDir) => {
+  startWatchingTetherFolder(targetDir);
+  return { success: true, isWatching: isTetherWatching, path: currentTetherDir };
+});
+
+ipcMain.handle('stop-tether-watch', () => {
+  stopWatchingTetherFolder();
+  return { success: true, isWatching: false };
+});
+
+ipcMain.handle('clear-tether-history', () => {
+  processedTetherFiles.clear();
+  try {
+    const existing = fs.readdirSync(getTetherDirectory());
+    existing.forEach(f => processedTetherFiles.add(path.join(getTetherDirectory(), f)));
+  } catch (e) {}
+  return { success: true };
 });
