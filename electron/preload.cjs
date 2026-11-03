@@ -20,12 +20,9 @@ contextBridge.exposeInMainWorld(
 
     // Tethered Camera Hot Folder APIs
     getHotFolder: () => ipcRenderer.invoke('get-hot-folder-path'),
-    setHotFolder: (dir) => ipcRenderer.invoke('set-hot-folder-path', dir),
     selectHotFolder: () => ipcRenderer.invoke('select-hot-folder-dialog'),
     openHotFolder: () => ipcRenderer.invoke('open-hot-folder'),
     startTetherWatch: (dir) => ipcRenderer.invoke('start-tether-watch', dir),
-    stopTetherWatch: () => ipcRenderer.invoke('stop-tether-watch'),
-    clearTetherHistory: () => ipcRenderer.invoke('clear-tether-history'),
     onTetherPhoto: (callback) => {
       const listener = (_event, data) => callback(data);
       ipcRenderer.on('new-tether-photo', listener);

@@ -46,9 +46,6 @@ body {
   z-index: -2;
   pointer-events: none;
   overflow: hidden;
-}
-
-.atmosphere {
   contain: strict;
 }
 

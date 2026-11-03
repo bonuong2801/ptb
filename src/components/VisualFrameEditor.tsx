@@ -2,69 +2,49 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Upload, RotateCw } from 'lucide-react';
 import { CustomFrameConfig, PhotoShape } from '../types/booth';
 
-// Shared Strip Preview Component (Memoized for zero re-renders during editing)
-export const StripPreview = React.memo(function StripPreview({ config, capturedImages, className = "" }: { config: CustomFrameConfig, capturedImages: string[], className?: string }) {
-  const isSquareFrame = config.frameShape === 'square';
-  const aspectClass = isSquareFrame ? 'aspect-square' : 'aspect-[1/3]';
-  const currentLayouts = config.photoLayouts || Array.from({length: config.totalShots}).map((_, i) => ({ x: 10, y: 10 + (i * 20), width: 80, height: 15, rotation: 0 }));
-
-  return (
-    <div className={`relative bg-transparent overflow-hidden shrink-0 w-full ${aspectClass} ${className}`}>
-      <div className="absolute inset-0 z-10 w-full h-full">
-        {currentLayouts.map((layout, idx) => {
-           if (idx >= config.totalShots) return null;
-           const captured = capturedImages[idx];
-           const shape = config.photoShapes[idx] || 'rectangle';
-           const rotation = layout.rotation || 0;
-           return (
-              <div 
-                key={idx} 
-                className={`absolute overflow-hidden flex items-center justify-center ${shape === 'circle' ? 'rounded-full' : ''} bg-transparent`} 
-                style={{ 
-                  left: `${layout.x}%`, 
-                  top: `${layout.y}%`, 
-                  width: `${layout.width}%`, 
-                  height: `${layout.height}%`,
-                  transform: rotation ? `rotate(${rotation}deg)` : undefined,
-                  transformOrigin: 'center center'
-                }}
-              >
-                 {captured ? (
-                    <img src={captured} className="w-full h-full object-cover animate-zoom-in" alt="Captured" />
-                 ) : (
-                    <div className="w-full h-full bg-transparent"></div>
-                 )}
-              </div>
-           )
-        })}
-      </div>
-      {config.frameImage && (
-         <img src={config.frameImage} className={`absolute inset-0 w-full h-full object-fill pointer-events-none ${config.frameLayering === 'below' ? 'z-0' : 'z-20'}`} alt="Frame" />
-      )}
-    </div>
-  );
-});
-
-// Auto-scaling wrapper for perfect fit (Memoized)
+// Auto-scaling photo strip preview (Memoized)
 export const ScalablePreview = React.memo(function ScalablePreview({ config, capturedImages }: { config: CustomFrameConfig, capturedImages: string[] }) {
   const isSquareFrame = config.frameShape === 'square';
   const aspectClass = isSquareFrame ? 'aspect-square' : 'aspect-[1/3]';
+  const currentLayouts = config.photoLayouts || Array.from({ length: config.totalShots }).map((_, i) => ({ x: 10, y: 10 + (i * 20), width: 80, height: 15, rotation: 0 }));
 
   return (
     <div className="w-full h-full flex items-center justify-center p-2">
       <div 
-        className={`relative shrink-0 ${aspectClass}`}
-        style={{ 
-          maxHeight: '100%', 
-          maxWidth: '100%', 
-          height: '100%' 
-        }}
+        className={`relative shrink-0 overflow-hidden ${aspectClass}`}
+        style={{ maxHeight: '100%', maxWidth: '100%', height: '100%' }}
       >
-         <StripPreview 
-            config={config} 
-            capturedImages={capturedImages} 
-            className="!absolute !inset-0 !w-full !h-full" 
-         />
+        <div className="absolute inset-0 z-10 w-full h-full">
+          {currentLayouts.map((layout, idx) => {
+             if (idx >= config.totalShots) return null;
+             const captured = capturedImages[idx];
+             const shape = config.photoShapes[idx] || 'rectangle';
+             const rotation = layout.rotation || 0;
+             return (
+                <div 
+                  key={idx} 
+                  className={`absolute overflow-hidden flex items-center justify-center ${shape === 'circle' ? 'rounded-full' : ''} bg-transparent`} 
+                  style={{ 
+                    left: `${layout.x}%`, 
+                    top: `${layout.y}%`, 
+                    width: `${layout.width}%`, 
+                    height: `${layout.height}%`,
+                    transform: rotation ? `rotate(${rotation}deg)` : undefined,
+                    transformOrigin: 'center center'
+                  }}
+                >
+                   {captured ? (
+                      <img src={captured} className="w-full h-full object-cover animate-zoom-in" alt="Captured" />
+                   ) : (
+                      <div className="w-full h-full bg-transparent" />
+                   )}
+                </div>
+             );
+          })}
+        </div>
+        {config.frameImage && (
+           <img src={config.frameImage} className={`absolute inset-0 w-full h-full object-fill pointer-events-none ${config.frameLayering === 'below' ? 'z-0' : 'z-20'}`} alt="Frame" />
+        )}
       </div>
     </div>
   );
@@ -308,7 +288,7 @@ export function VisualFrameEditor({
         const currentLayouts = prev.photoLayouts || Array.from({length: prev.totalShots}).map((_, i) => ({ x: 10, y: 10 + (i * 20), width: 80, height: 15, rotation: 0 }));
         const newLayouts = [...currentLayouts, { x: 20, y: 20, width: 30, height: 20, rotation: 0 }];
         const newShapes = [...prev.photoShapes, 'rectangle' as PhotoShape];
-        return { ...prev, totalShots: newLayouts.length, photoLayouts: newLayouts, photoShapes: newShapes, layoutMode: 'freeform' };
+        return { ...prev, totalShots: newLayouts.length, photoLayouts: newLayouts, photoShapes: newShapes };
      });
      setActiveSlotIdx((localConfig.photoLayouts?.length || localConfig.totalShots));
   };

@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { RefreshCw, Camera } from 'lucide-react';
-import { CustomFrameConfig, CHANNEL_NAME, CaptureSourceMode, TetherPhotoData } from '../types/booth';
+import { CustomFrameConfig, CHANNEL_NAME, CaptureSourceMode, DEFAULT_FRAME_CONFIG } from '../types/booth';
 import { SyncService } from '../utils/syncService';
-import { generateFinalImage, syncDB } from '../utils/frameRenderer';
+import { generateFinalImage, captureVideoFrame, syncDB } from '../utils/frameRenderer';
 import { ScalablePreview } from './VisualFrameEditor';
 
 export function CameraScreen() {
@@ -14,14 +14,7 @@ export function CameraScreen() {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
-  const [customConfig, setCustomConfig] = useState<CustomFrameConfig>({
-    id: 'default',
-    name: 'Khung Mặc Định',
-    frameImage: null,
-    totalShots: 4,
-    frameShape: 'rectangle',
-    photoShapes: ['rectangle', 'rectangle', 'rectangle', 'rectangle'], layoutMode: 'freeform', photoLayouts: [{x: 10, y: 5, width: 80, height: 20}, {x: 10, y: 28, width: 80, height: 20}, {x: 10, y: 51, width: 80, height: 20}, {x: 10, y: 74, width: 80, height: 20}]
-  });
+  const [customConfig, setCustomConfig] = useState<CustomFrameConfig>(DEFAULT_FRAME_CONFIG);
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -108,38 +101,8 @@ export function CameraScreen() {
   };
 
   const captureFromVideoCanvas = (shotIndex: number) => {
-    if (canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        canvas.width = (video?.videoWidth) || 1280;
-        canvas.height = (video?.videoHeight) || 720;
-        
-        if (video && video.srcObject && video.readyState >= 2) {
-            if (isMirrored) {
-              ctx.save();
-              ctx.translate(canvas.width, 0);
-              ctx.scale(-1, 1);
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-              ctx.restore();
-            } else {
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            }
-        } else {
-            ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.strokeStyle = '#333'; ctx.lineWidth = 2; ctx.beginPath();
-            ctx.moveTo(0, 0); ctx.lineTo(canvas.width, canvas.height);
-            ctx.moveTo(canvas.width, 0); ctx.lineTo(0, canvas.height);
-            ctx.stroke();
-            ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '24px "Courier New"'; ctx.textAlign = 'center';
-            ctx.fillText(`SIMULATED SHOT ${shotIndex + 1}`, canvas.width / 2, canvas.height / 2);
-        }
-          
-        const newImage = canvas.toDataURL('image/jpeg', 0.9);
-        commitShotImage(newImage);
-      }
-    }
+    const newImage = captureVideoFrame(videoRef.current, canvasRef.current, isMirrored, shotIndex);
+    if (newImage) commitShotImage(newImage);
   };
 
   const takePhoto = (shotIndex: number) => {

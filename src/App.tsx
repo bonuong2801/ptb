@@ -3,9 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import WebPrototype from './components/WebPrototype';
+import { ControlScreen } from './components/ControlScreen';
+import { CameraScreen } from './components/CameraScreen';
 
 export default function App() {
+  const isCamera = new URLSearchParams(window.location.search).get('mode') === 'camera';
+
   return (
     <div className="min-h-screen text-white font-sans selection:bg-cyan-500/30 selection:text-cyan-200 relative bg-black overflow-hidden">
       <div className="relative w-full h-screen flex flex-col bg-bg-deep">
@@ -16,7 +19,7 @@ export default function App() {
         </div>
         <div className="grid-overlay"></div>
         <div className="relative z-10 w-full h-full flex flex-col">
-          <WebPrototype />
+          {isCamera ? <CameraScreen /> : <ControlScreen />}
         </div>
       </div>
     </div>

@@ -253,3 +253,48 @@ export const syncDB = {
     });
   }
 };
+
+
+// Shared video canvas snapshot and fallback simulated shot renderer
+export function captureVideoFrame(
+  video: HTMLVideoElement | null,
+  canvas: HTMLCanvasElement | null,
+  isMirrored: boolean,
+  shotIndex: number
+): string | null {
+  if (!canvas) return null;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  canvas.width = video?.videoWidth || 1280;
+  canvas.height = video?.videoHeight || 720;
+
+  if (video && video.srcObject && video.readyState >= 2) {
+    if (isMirrored) {
+      ctx.save();
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    } else {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
+  } else {
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(canvas.width, canvas.height);
+    ctx.moveTo(canvas.width, 0);
+    ctx.lineTo(0, canvas.height);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.font = '24px "Courier New"';
+    ctx.textAlign = 'center';
+    ctx.fillText(`SIMULATED SHOT ${shotIndex + 1}`, canvas.width / 2, canvas.height / 2);
+  }
+
+  return canvas.toDataURL('image/jpeg');
+}

@@ -122,43 +122,27 @@ export const A4PrintArrangerModal: React.FC<A4PrintArrangerModalProps> = ({
     }
   };
 
-  // Khởi tạo danh sách dải ảnh theo số lượng bản in ban đầu
-  const [strips, setStrips] = useState<A4StripItem[]>(() => {
-    const count = Math.max(1, Math.min(6, initialCopies));
+  const getDefaultStrips = (copies: number): A4StripItem[] => {
+    const count = Math.max(1, Math.min(6, copies));
     if (count <= 2) {
       return [
         { id: 'strip-1', x: 23, y: 24.7, rotation: 0 },
         ...(count === 2 ? [{ id: 'strip-2', x: 53, y: 24.7, rotation: 0 as const }] : [])
       ];
-    } else {
-      // 4 bản trở lên: Xếp 4 dải đứng song song trên A4 Ngang
-      return [
-        { id: 'strip-1', x: 6.5, y: 14.3, rotation: 0 },
-        { id: 'strip-2', x: 29.5, y: 14.3, rotation: 0 },
-        { id: 'strip-3', x: 52.5, y: 14.3, rotation: 0 },
-        { id: 'strip-4', x: 75.5, y: 14.3, rotation: 0 }
-      ];
     }
-  });
+    return [
+      { id: 'strip-1', x: 6.5, y: 14.3, rotation: 0 },
+      { id: 'strip-2', x: 29.5, y: 14.3, rotation: 0 },
+      { id: 'strip-3', x: 52.5, y: 14.3, rotation: 0 },
+      { id: 'strip-4', x: 75.5, y: 14.3, rotation: 0 }
+    ];
+  };
 
-  // Tự động điều chỉnh khi initialCopies thay đổi
+  const [strips, setStrips] = useState<A4StripItem[]>(() => getDefaultStrips(initialCopies));
+
   useEffect(() => {
-    const count = Math.max(1, Math.min(6, initialCopies));
-    if (count <= 2) {
-      setOrientation('portrait');
-      setStrips([
-        { id: 'strip-1', x: 23, y: 24.7, rotation: 0 },
-        ...(count === 2 ? [{ id: 'strip-2', x: 53, y: 24.7, rotation: 0 as const }] : [])
-      ]);
-    } else if (count >= 4) {
-      setOrientation('landscape');
-      setStrips([
-        { id: 'strip-1', x: 6.5, y: 14.3, rotation: 0 },
-        { id: 'strip-2', x: 29.5, y: 14.3, rotation: 0 },
-        { id: 'strip-3', x: 52.5, y: 14.3, rotation: 0 },
-        { id: 'strip-4', x: 75.5, y: 14.3, rotation: 0 }
-      ]);
-    }
+    setOrientation(initialCopies >= 4 ? 'landscape' : 'portrait');
+    setStrips(getDefaultStrips(initialCopies));
   }, [initialCopies]);
 
   // Xử lý sự kiện kéo thả (Drag & Drop) siêu tốc 60-120 FPS qua GPU translate3d

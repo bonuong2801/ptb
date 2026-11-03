@@ -176,14 +176,9 @@ ipcMain.handle('select-directory', async (event) => {
 });
 
 function createWindow() {
-  const splashVideoPath = path.join(__dirname, 'splash.mp4');
-  const hasSplash = fs.existsSync(splashVideoPath);
-
-  // --- 1. Tạo Admin Window ---
   adminWindow = new BrowserWindow({
     width: 1200, height: 800,
     title: 'CGBOOTH - Admin',
-    show: !hasSplash, // Nếu không có splash thì hiện cửa sổ Admin ngay lập tức!
     webPreferences: { 
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false, 
@@ -195,50 +190,15 @@ function createWindow() {
   adminWindow.setMenuBarVisibility(false);
   adminWindow.loadFile(path.join(__dirname, '../dist/index.html'), { search: '?mode=admin' });
   
-  if (!hasSplash) {
-    adminWindow.once('ready-to-show', () => {
-      adminWindow.show();
-      adminWindow.focus();
-    });
-  }
+  adminWindow.once('ready-to-show', () => {
+    adminWindow.show();
+    adminWindow.focus();
+  });
 
   adminWindow.on('closed', () => { 
     adminWindow = null;
     app.quit(); 
   });
-
-  // --- 2. Nếu có file splash.mp4 thì mới hiển thị Splash ---
-  if (hasSplash) {
-    const splashWindow = new BrowserWindow({
-      width: 800, height: 600,
-      transparent: true,
-      frame: false,
-      alwaysOnTop: true,
-      resizable: false,
-      center: true,
-      webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false
-      }
-    });
-    
-    splashWindow.loadFile(path.join(__dirname, 'splash.html'));
-
-    const finishSplash = () => {
-      if (splashWindow && !splashWindow.isDestroyed()) {
-        splashWindow.close();
-      }
-      if (adminWindow && !adminWindow.isDestroyed()) {
-        adminWindow.show();
-        adminWindow.focus();
-      }
-    };
-
-    ipcMain.once('splash-finished', finishSplash);
-
-    // Timeout an toàn 4 giây: nếu splash bị treo/lỗi thì vẫn tự động mở Admin
-    setTimeout(finishSplash, 4000);
-  }
 }
 
 // Fix #9: Đổi ipcMain.on → ipcMain.handle để renderer có thể nhận lỗi
@@ -284,7 +244,7 @@ ipcMain.on('broadcast-sync', (event, data) => {
   if (customerWindow && event.sender !== customerWindow.webContents) customerWindow.webContents.send('sync-received', data);
 });
 
-ipcMain.handle('save-session', async (event, { sessionName, finalImage, rawImages, videoBase64, videoBuffer }) => {
+ipcMain.handle('save-session', async (event, { sessionName, finalImage, rawImages, videoBuffer }) => {
   try {
     const safeSessionName = (sessionName || `Session_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_');
     const targetDir = path.join(getSaveDirectory(), safeSessionName);
@@ -482,14 +442,6 @@ function stopWatchingTetherFolder() {
 
 ipcMain.handle('get-hot-folder-path', () => getTetherDirectory());
 
-ipcMain.handle('set-hot-folder-path', (event, newPath) => {
-  if (newPath) {
-    saveConfig('tetherDirectory', newPath);
-    startWatchingTetherFolder(newPath);
-    return { success: true, path: newPath };
-  }
-  return { success: false };
-});
 
 ipcMain.handle('select-hot-folder-dialog', async () => {
   const result = await dialog.showOpenDialog(adminWindow, {
@@ -517,16 +469,4 @@ ipcMain.handle('start-tether-watch', (event, targetDir) => {
   return { success: true, isWatching: isTetherWatching, path: currentTetherDir };
 });
 
-ipcMain.handle('stop-tether-watch', () => {
-  stopWatchingTetherFolder();
-  return { success: true, isWatching: false };
-});
 
-ipcMain.handle('clear-tether-history', () => {
-  processedTetherFiles.clear();
-  try {
-    const existing = fs.readdirSync(getTetherDirectory());
-    existing.forEach(f => processedTetherFiles.add(path.join(getTetherDirectory(), f)));
-  } catch (e) {}
-  return { success: true };
-});

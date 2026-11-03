@@ -8,12 +8,10 @@ export interface CustomFrameConfig {
   totalShots: number;
   frameShape: FrameShape;
   photoShapes: PhotoShape[];
-  layoutMode?: 'grid' | 'freeform';
   photoLayouts?: { x: number; y: number; width: number; height: number; rotation?: number; }[];
   frameLayering?: 'above' | 'below';
 }
 
-export type ViewMode = 'control' | 'camera';
 export type CaptureSourceMode = 'stream' | 'hotfolder';
 
 export interface TetherPhotoData {
@@ -23,6 +21,22 @@ export interface TetherPhotoData {
   size: number;
   timestamp: number;
 }
+
+
+export const DEFAULT_FRAME_CONFIG: CustomFrameConfig = {
+  id: 'default',
+  name: 'Khung Mặc Định',
+  frameImage: null,
+  totalShots: 4,
+  frameShape: 'rectangle',
+  photoShapes: ['rectangle', 'rectangle', 'rectangle', 'rectangle'],
+  photoLayouts: [
+    { x: 10, y: 5, width: 80, height: 20 },
+    { x: 10, y: 28, width: 80, height: 20 },
+    { x: 10, y: 51, width: 80, height: 20 },
+    { x: 10, y: 74, width: 80, height: 20 }
+  ]
+};
 
 export const CHANNEL_NAME = 'photobooth-sync';
 
@@ -34,7 +48,6 @@ declare global {
         finalImage?: string;
         rawImages?: string[];
         videoBuffer?: ArrayBuffer;
-        videoBase64?: string;
       }) => Promise<{ success: boolean; folderPath?: string; downloadUrl?: string; mode?: string; sessionName?: string; error?: string }>;
       openCustomerScreen: () => Promise<{ success: boolean; error?: string }>;
       broadcastSync: (data: any) => void;
@@ -49,12 +62,9 @@ declare global {
       getAccountingBackup?: () => Promise<any>;
       // Tethered Camera Hot Folder APIs
       getHotFolder?: () => Promise<string>;
-      setHotFolder?: (dir: string) => Promise<{ success: boolean; path?: string }>;
       selectHotFolder?: () => Promise<string | null>;
       openHotFolder?: () => Promise<{ success: boolean }>;
       startTetherWatch?: (dir?: string) => Promise<{ success: boolean; isWatching: boolean; path: string }>;
-      stopTetherWatch?: () => Promise<{ success: boolean; isWatching: boolean }>;
-      clearTetherHistory?: () => Promise<{ success: boolean }>;
       onTetherPhoto?: (callback: (data: TetherPhotoData) => void) => () => void;
     };
   }
